@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "profiles": [
+    {
+      "id": "infalsus-1.0.5",
+      "file": "profiles/current-105.json",
+      "gameAssemblySha256": "966A74586FD9FCD69DC0831E32F17F058E9F11E6B172D6688265D80A4F15D9D9",
+      "metadataSha256": "B3FCCAD7CB85F61E1E01CAC8FF22E9878A0276B7349C42881CAEB567C767EF83"
+    },
+    {
+      "id": "infalsus-latest",
+      "file": "profiles/latest.json",
+      "gameAssemblySha256": "0314ADAEDF482BB9C3D8D300B69E1FA47235AAF618033C03BD631ADE567AB98F",
+      "metadataSha256": "6232B6F50ED7FA3962BB2F69203F05E4AC919AED1441A0C5C412B69A3749BBB0"
+    }
+  ]
+}

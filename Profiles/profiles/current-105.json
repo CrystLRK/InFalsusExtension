@@ -1,0 +1,753 @@
+{
+  "schemaVersion": 2,
+  "id": "infalsus-1.0.5",
+  "kind": "current",
+  "gameAssemblySha256": "966A74586FD9FCD69DC0831E32F17F058E9F11E6B172D6688265D80A4F15D9D9",
+  "metadataSha256": "B3FCCAD7CB85F61E1E01CAC8FF22E9878A0276B7349C42881CAEB567C767EF83",
+  "capabilities": [
+    "CapacityPatch",
+    "ChartIngress",
+    "TimingGroup",
+    "SkyBlock",
+    "BombVisual",
+    "BombJudge",
+    "Autoplay",
+    "SkyColor",
+    "SceneControl",
+    "CustomSong",
+    "Background",
+    "TrackMove",
+    "HideGroup",
+    "NormalSkyEdge",
+    "VisualNotes",
+    "AudioOffset",
+    "NativeRead",
+    "SkyFeedback",
+    "CustomScores",
+    "AutoplayScoreGuard",
+    "CustomDifficultyUnlock"
+  ],
+  "classes": {
+    "capacitySideNote": [
+      "Game.Data.dll",
+      "_b",
+      "_hA"
+    ],
+    "capacityChart": [
+      "Game.Data.dll",
+      "_b",
+      "_T"
+    ],
+    "capacityJudge": [
+      "Game.dll",
+      "_E",
+      "_VD"
+    ],
+    "note": [
+      "Game.Data.dll",
+      "_b",
+      "_fA"
+    ],
+    "compiled": [
+      "Game.Data.dll",
+      "_b",
+      "_T"
+    ]
+  },
+  "NativeLayoutCatalog": {
+    "SideCount": 5,
+    "NoteStride": 128,
+    "BoxedValueHeader": 16,
+    "ArrayLengthOffset": 24,
+    "ArrayDataOffset": 32
+  },
+  "Runtime": {
+    "CachedPointer": 16,
+    "ListItems": 16,
+    "ListCount": 24,
+    "MemoryObject": 0,
+    "MemoryIndex": 8,
+    "MemoryLength": 16,
+    "OperationInternalHandle": 0,
+    "OperationVersion": 8,
+    "OperationPadding": 12,
+    "OperationLocationName": 16
+  },
+  "CompiledSide": {
+    "PositionArray": 16,
+    "MemoryObject": 24,
+    "MemoryIndex": 32,
+    "MemoryCount": 40
+  },
+  "Note": {
+    "Id": 0,
+    "Group": 8,
+    "Side": 16,
+    "Type": 20,
+    "StartMs": 24,
+    "EndMs": 28,
+    "PackedStart": 32,
+    "PackedEnd": 44,
+    "PackedStartWidth": 56,
+    "PackedEndWidth": 68,
+    "Lane": 32,
+    "StartCenter": 40,
+    "EndCenter": 52,
+    "StartWidth": 64,
+    "EndWidth": 76,
+    "RuntimeLead": 80,
+    "Consumed": 112,
+    "Flags": 116,
+    "RecordStart": 120,
+    "RecordEnd": 124
+  },
+  "Compiled": {
+    "RecordDictionary": 56,
+    "WarpMemoryObject": 96,
+    "WarpMemoryIndex": 104,
+    "WarpMemoryLength": 108,
+    "WarpEntryStride": 16,
+    "WarpEntryEnd": 8
+  },
+  "Record": {
+    "Stride": 40,
+    "GlobalIndex": 0,
+    "RelativeTime": 8,
+    "Judgment": 32,
+    "Final": 33,
+    "ConversionMarker": 34
+  },
+  "SkyJudge": {
+    "InputStates": 88,
+    "RecordStates": 104,
+    "InputStateStride": 24,
+    "InputHeld": 0,
+    "InputPressed": 1,
+    "InputConsumed": 2,
+    "InputPressedAt": 8,
+    "RecordStateContinuation": 1,
+    "CursorX": 152,
+    "ChartTime": 208,
+    "WarningTime": 24,
+    "PenaltyTime": 32,
+    "SpaceCovered": 81,
+    "PendingPresentation": 96
+  },
+  "GameSceneAudio": {
+    "ShStride": 48,
+    "ShType": 0,
+    "ShBool": 4,
+    "HoldBus": 384,
+    "HoldBusRunning": 20
+  },
+  "Track": {
+    "RightLaneElements": 32,
+    "RightLaneAnchor": 40,
+    "RightLaneRenderer": 48,
+    "LeftLaneRenderer": 56,
+    "LeftLaneJudgementLine": 64,
+    "MasterScene": 216,
+    "SkyCursor": 368,
+    "SkyCursorRenderer": 376,
+    "SkyGhostCursor": 416,
+    "CursorExtrasContainer": 424,
+    "SkyJudgementLineGlowRenderer": 432,
+    "NotesContainer": 496,
+    "LeftWallRenderer": 536,
+    "RightWallRenderer": 544,
+    "RuntimeRenderers": 584,
+    "HomePosition": 792,
+    "CenterRotation": 804,
+    "HoldRotation": 820,
+    "RestPosition": 908,
+    "RestRotation": 920,
+    "SideLeftPosition": 952,
+    "SideLeftRotation": 964,
+    "SideRightPosition": 980,
+    "SideRightRotation": 992,
+    "CenterScaleX": 1040,
+    "CenterScaleY": 1044,
+    "CenterScaleZ": 1048,
+    "SideScaleVector": 1052,
+    "SideScaleY": 1056,
+    "SideScaleZ": 1060,
+    "LaneCenters": 1136,
+    "TrackWidth": 1144,
+    "NoteWidthScale": 1148,
+    "BaseSpeed": 1192,
+    "DepthFactor": 1216,
+    "LaneRenderers": 2056
+  },
+  "SkySafeArea": {
+    "MeshRenderer": 48,
+    "ColorDetails": 56,
+    "NativeNoteId": 80
+  },
+  "SafeAreaColorDetails": {
+    "MainDefault": 24,
+    "EdgeCenterDefault": 40,
+    "EdgeGlowDefault": 56,
+    "FrontBackDefault": 72,
+    "MainRed": 88,
+    "EdgeCenterRed": 104,
+    "EdgeGlowRed": 120,
+    "FrontBackRed": 136,
+    "ColorStride": 16
+  },
+  "Background": {
+    "OutputQuad": 32,
+    "ConstrainedMaterial": 336
+  },
+  "FlickNote": {
+    "BackingMeshRenderer": 40
+  },
+  "TapNote": {
+    "MeshRenderer": 32,
+    "LeftGuideObjects": 40,
+    "RightGuideObjects": 48,
+    "RuntimeMaterial": 56
+  },
+  "Audio": {
+    "Channel": 16
+  },
+  "CustomSong": {
+    "SongArray": 32,
+    "SongIdJacketArray": 56,
+    "ChartIdJacketArray": 64,
+    "SongIdJacketCache": 72,
+    "ChartIdJacketCache": 80,
+    "AudioChannel": 16,
+    "AudioSound": 32,
+    "AudioPreviewStart": 48,
+    "AudioPreviewEnd": 56,
+    "AudioSelectorCallback": 64,
+    "AudioPaused": 76,
+    "AudioSkipPreviewSeek": 84,
+    "AudioConfigured": 88
+  },
+  "Result": {
+    "Pace": 8,
+    "TapCounts": 10,
+    "HoldCounts": 26,
+    "SkyAreaCounts": 42,
+    "FlickCounts": 58,
+    "PlayerScore": 80
+  },
+  "Capacity": {
+    "OriginalSideNote": 4096,
+    "OriginalAuxTable": 8096,
+    "OriginalRecord": 32384,
+    "OriginalJudgeState": 8096
+  },
+  "Presentation": {
+    "Stride": 40,
+    "NoteId": 0,
+    "RecordStart": 8,
+    "RecordCount": 12,
+    "RecordIndex": 16,
+    "PositionX": 24,
+    "PositionY": 28,
+    "PositionZ": 32,
+    "EnqueueMethodName": "Enqueue",
+    "EnqueueParameterSize": 40
+  },
+  "CapacityScanner": {
+    "MovEdxOpcode": 186,
+    "CallOpcode": 232,
+    "MaxScanBytes": 4096,
+    "MaxPatternGap": 128,
+    "SideNoteSiteCount": 1,
+    "ChartSiteCount": 7,
+    "JudgeStateSiteCount": 2,
+    "ChartSiteNames": [
+      "chartData+96(id table)",
+      "chartData+112(id table)",
+      "chartData+128(aux)",
+      "chartData+144(aux)",
+      "chartData+160(aux)",
+      "chartData+176(records)",
+      "chartData+192(records)"
+    ]
+  },
+  "PatchTargets": {
+    "resultsStart": {
+      "managedType": "Il2Cppifapp.Game.Scenes.ResultsScene",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game.Scenes",
+      "class": "ResultsScene",
+      "method": "Start",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomScores"
+      ],
+      "rva": "0x727df0",
+      "prologue": "48 89 4C 24 08 55 56 57 41 54 41 55 41 56 41 57"
+    },
+    "gameResultsTryUpdate": {
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game.Data",
+      "class": "GameResultsV4",
+      "method": "TryUpdate",
+      "parameterTypes": [
+        "Il2Cppifapp.Game.Data.SongInfo&",
+        "Il2Cppifapp.Game.Data.GameResultV4&",
+        "System.Int64&"
+      ],
+      "returnType": "Il2Cppifapp.Game.Data.GameResultsV4+UpdateResult",
+      "genericArity": 0,
+      "capabilities": [
+        "AutoplayScoreGuard"
+      ],
+      "managedType": "Il2Cppifapp.Game.Data.GameResultsV4",
+      "rva": "0x4a2200",
+      "prologue": "48 89 5C 24 10 48 89 74 24 18 55 57 41 57 48 8D"
+    },
+    "saveRequest": {
+      "assembly": "Game.dll",
+      "namespace": "_K",
+      "class": "_NH",
+      "method": "_SoA",
+      "parameterTypes": [
+        "Il2CppSystem.Action<Il2Cpp_K._rH>"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "AutoplayScoreGuard"
+      ],
+      "managedType": "Il2Cpp_K._NH",
+      "rva": "0x4c89e0",
+      "prologue": "48 89 5C 24 08 57 48 83 EC 20 80 3D 9F 44 E7 02"
+    },
+    "difficultyStatus": {
+      "assembly": "Game.dll",
+      "namespace": "_K",
+      "class": "_NH",
+      "method": "_uoA",
+      "parameterTypes": [
+        "Il2Cppifapp.Game.Data.DataAccess",
+        "Il2Cppifapp.Game.Data.SongInfo&",
+        "Il2Cppifapp.Game.Data.ChartDifficultyFlag",
+        "Il2Cpp_K._nH"
+      ],
+      "returnType": "Il2Cpp_K._Ch",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomDifficultyUnlock"
+      ],
+      "managedType": "Il2Cpp_K._NH",
+      "rva": "0x4cc700",
+      "prologue": "40 53 57 41 54 41 57 48 83 EC 78 80 3D 81 07 E7"
+    },
+    "chartParse": {
+      "managedType": "Il2Cpp_n._S",
+      "assembly": "Game.dll",
+      "namespace": "_n",
+      "class": "_S",
+      "method": "_Gab",
+      "parameterTypes": [
+        "Il2CppSystem.ReadOnlySpan<System.Byte>",
+        "System.String"
+      ],
+      "returnType": "Il2CppSystem.ValueTuple<Il2Cpp_b._t,Il2CppSystem.Collections.Generic.List<Il2Cpp_b._fA>,Il2CppSystem.Collections.Generic.List<Il2Cpp_b._eA>>",
+      "genericArity": 0,
+      "capabilities": [
+        "ChartIngress",
+        "CustomSong"
+      ],
+      "rva": "0x533220",
+      "prologue": "4C 89 44 24 18 48 89 4C 24 08 55 53 57 48 8D 6C"
+    },
+    "chartPath": {
+      "managedType": "Il2Cpp_k._BG",
+      "assembly": "Game.Common.dll",
+      "namespace": "_k",
+      "class": "_BG",
+      "method": "_DJA",
+      "parameterTypes": [
+        "System.String",
+        "System.Int32&"
+      ],
+      "returnType": "System.Boolean",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomSong"
+      ],
+      "rva": "0x4578f0",
+      "prologue": "48 89 5C 24 10 4C 89 44 24 18 48 89 4C 24 08 57"
+    },
+    "audioFactory": {
+      "managedType": "Il2Cpp_J._zf",
+      "assembly": "Game.Audio.dll",
+      "namespace": "_J",
+      "class": "_zf",
+      "method": "_RFA",
+      "parameterTypes": [
+        "System.String",
+        "Il2Cpp_J._IF+_jF",
+        "Il2CppSystem.Action<Il2Cpp_J._Cg>",
+        "System.Boolean",
+        "System.Double",
+        "System.Double",
+        "System.Boolean",
+        "Il2Cpp_J._YF"
+      ],
+      "returnType": "Il2Cpp_J._Cg",
+      "genericArity": 0,
+      "capabilities": [
+        "AudioOffset",
+        "CustomSong"
+      ],
+      "rva": "0x4492f0",
+      "prologue": "40 53 55 56 57 48 81 EC 98 00 00 00 80 3D 34 36"
+    },
+    "songCache": {
+      "managedType": "Il2Cppifapp.Game.Data.SongData",
+      "assembly": "Game.Data.dll",
+      "namespace": "ifapp.Game.Data",
+      "class": "SongData",
+      "method": "_yOA",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomSong"
+      ],
+      "rva": "0x4be3a0",
+      "prologue": "40 53 56 57 41 56 48 81 EC A8 00 00 00 48 8B F9"
+    },
+    "packSceneAwake": {
+      "managedType": "Il2Cppifapp.Game.PackSelectScene",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game",
+      "class": "PackSelectScene",
+      "method": "Awake",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomSong"
+      ],
+      "rva": "0x52e9e0",
+      "prologue": "40 53 57 41 57 48 81 EC 90 00 00 00 80 3D 9E E7"
+    },
+    "dynamicStringsAfter": {
+      "managedType": "Il2Cppifapp.Game.Data.DynamicStringMapping",
+      "assembly": "Game.Data.dll",
+      "namespace": "ifapp.Game.Data",
+      "class": "DynamicStringMapping",
+      "method": "OnAfterDeserialize",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomSong"
+      ],
+      "rva": "0x488580",
+      "prologue": "33 D2 E9 A9 00 00 00 CC CC CC CC CC CC CC CC CC"
+    },
+    "addressablesMaterialByKey": {
+      "managedType": "UnityEngine.AddressableAssets.AddressablesImpl",
+      "assembly": "Unity.Addressables.dll",
+      "namespace": "UnityEngine.AddressableAssets",
+      "class": "AddressablesImpl",
+      "method": "LoadAssetAsync",
+      "parameterTypes": [
+        "Il2CppSystem.Object"
+      ],
+      "returnType": "UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationHandle<!0>",
+      "genericArity": 1,
+      "genericArguments": [
+        "UnityEngine.Material"
+      ],
+      "capabilities": [
+        "CustomSong"
+      ],
+      "rva": "0x75ead0",
+      "fallbackRva": "0x75f230",
+      "prologue": "4C 89 4C 24 20 48 89 54 24 10 48 89 4C 24 08 55",
+      "fallbackPrologue": "48 8B C4 4C 89 48 20 48 89 50 10 48 89 48 08 53"
+    },
+    "addressablesHandleAcquire": {
+      "managedType": "UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationHandle",
+      "assembly": "Unity.ResourceManager.dll",
+      "namespace": "UnityEngine.ResourceManagement.AsyncOperations",
+      "class": "AsyncOperationHandle",
+      "method": "Acquire",
+      "parameterTypes": [],
+      "returnType": "UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationHandle",
+      "genericArity": 0,
+      "capabilities": [
+        "CustomSong"
+      ],
+      "rva": "0x20e43c0",
+      "prologue": "48 89 5C 24 08 57 48 83 EC 20 80 3D C3 19 26 01"
+    },
+    "trackUpdate": {
+      "managedType": "Il2Cppifapp.Game.Scenes.Game.Track",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game.Scenes.Game",
+      "class": "Track",
+      "method": "Update",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "managedMetadataToken": "0x06003885",
+      "capabilities": [
+        "BombVisual",
+        "SkyBlock",
+        "SkyColor",
+        "SceneControl",
+        "TrackMove",
+        "HideGroup",
+        "NormalSkyEdge",
+        "VisualNotes",
+        "TimingGroup",
+        "AudioOffset",
+        "Background"
+      ],
+      "rva": "0x66bb50",
+      "prologue": "48 8B C4 48 89 48 08 53 56 57 41 54 41 55 41 56"
+    },
+    "trackSkyGhost": {
+      "managedType": "Il2Cppifapp.Game.Scenes.Game.Track",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game.Scenes.Game",
+      "class": "Track",
+      "method": "_BBA",
+      "parameterTypes": [
+        "System.Single"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "NativeRead"
+      ],
+      "rva": "0x66e8c0",
+      "prologue": "40 53 48 83 EC 70 0F 29 74 24 60 48 8B D9 F3 0F"
+    },
+    "logicalNotePlayerHb": {
+      "managedType": "Il2Cppifapp.Game.LogicalNotePlayer",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game",
+      "class": "LogicalNotePlayer",
+      "method": "_hb",
+      "parameterTypes": [
+        "System.Double",
+        "System.Double",
+        "System.Double",
+        "Il2CppSystem.Collections.Generic.Dictionary<Il2Cpp_b._CA,Il2Cppifapp.Game.Common.UnorderedListVal<System.Int32>>",
+        "System.Double"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "ChartIngress",
+        "TimingGroup",
+        "SceneControl",
+        "BombVisual",
+        "SkyBlock",
+        "VisualNotes",
+        "HideGroup"
+      ],
+      "rva": "0x529f90",
+      "prologue": "48 8B C4 53 56 57 41 54 41 55 41 56 41 57 48 81"
+    },
+    "logicalNotePlayerKb": {
+      "managedType": "Il2Cppifapp.Game.LogicalNotePlayer",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game",
+      "class": "LogicalNotePlayer",
+      "method": "_Kb",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "ChartIngress"
+      ],
+      "rva": "0x528300",
+      "prologue": "48 8B C4 48 89 58 08 55 56 57 41 54 41 55 41 56"
+    },
+    "logicalNotePlayerIb": {
+      "managedType": "Il2Cppifapp.Game.LogicalNotePlayer",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game",
+      "class": "LogicalNotePlayer",
+      "method": "_Ib",
+      "parameterTypes": [
+        "System.String",
+        "System.Int64",
+        "Il2CppSystem.ValueTuple<Il2Cpp_b._t,Il2CppSystem.Collections.Generic.List<Il2Cpp_b._fA>,Il2CppSystem.Collections.Generic.List<Il2Cpp_b._eA>>",
+        "System.String",
+        "System.Boolean"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "ChartIngress"
+      ],
+      "rva": "0x527550",
+      "prologue": "48 8B C4 4C 89 48 20 4C 89 40 18 48 89 50 10 48"
+    },
+    "judgeOz": {
+      "managedType": "Il2Cpp_E._VD",
+      "assembly": "Game.dll",
+      "namespace": "_E",
+      "class": "_VD",
+      "method": "_Oz",
+      "parameterTypes": [
+        "System.Double",
+        "Il2CppSystem.Collections.Generic.Queue<Il2Cpp_K._Sh>"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "BombJudge",
+        "SkyBlock",
+        "Autoplay"
+      ],
+      "rva": "0x5f2840",
+      "prologue": "48 8B C4 48 89 58 08 48 89 70 20 4C 89 40 18 F2"
+    },
+    "gameSceneEventDispatch": {
+      "managedType": "Il2Cppifapp.Game.Scenes.GameScene",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game.Scenes",
+      "class": "GameScene",
+      "method": "_Mk",
+      "parameterTypes": [
+        "Il2Cpp_K._Uh",
+        "Il2Cpp_K._Sh"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "SkyFeedback"
+      ],
+      "rva": "0x702240",
+      "prologue": "48 89 54 24 10 55 53 57 48 8D 6C 24 B9 48 81 EC"
+    },
+    "tapNoteVisual": {
+      "managedType": "Il2Cppifapp.Game.Scenes.Game.TapNote",
+      "assembly": "Game.dll",
+      "namespace": "ifapp.Game.Scenes.Game",
+      "class": "TapNote",
+      "method": "_ybA",
+      "parameterTypes": [
+        "System.Single"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "TimingGroup"
+      ],
+      "rva": "0x668a10",
+      "prologue": "40 53 48 83 EC 50 48 8B 51 38 48 8B D9 0F 29 74"
+    },
+    "backgroundApply": {
+      "managedType": "Il2Cpp.GenericGameplayBackground",
+      "assembly": "Game.dll",
+      "namespace": "",
+      "class": "GenericGameplayBackground",
+      "method": "_o",
+      "parameterTypes": [
+        "UnityEngine.Material"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "Background"
+      ],
+      "rva": "0x473030",
+      "prologue": "48 83 EC 28 48 8B 49 20 48 85 C9 74 0F 45 33 C9"
+    },
+    "backgroundUma": {
+      "managedType": "Il2Cppifapp.Game.Data.GameplayBackgrounds",
+      "assembly": "Game.Data.dll",
+      "namespace": "ifapp.Game.Data",
+      "class": "GameplayBackgrounds",
+      "method": "_UmA",
+      "parameterTypes": [
+        "Il2Cppifapp.Game.Data.GameplayBackground"
+      ],
+      "returnType": "UnityEngine.AddressableAssets.AssetReferenceT<UnityEngine.Material>",
+      "genericArity": 0,
+      "capabilities": [
+        "Background"
+      ],
+      "rva": "0x478680",
+      "prologue": "48 83 EC 28 4C 8B 41 18 4D 85 C0 74 13 41 3B 50"
+    },
+    "backgroundLia": {
+      "managedType": "Il2Cppifapp.Game.Common.AddressableHandleAutoReleaser",
+      "assembly": "Game.Common.dll",
+      "namespace": "ifapp.Game.Common",
+      "class": "AddressableHandleAutoReleaser",
+      "method": "_LIA",
+      "parameterTypes": [
+        "UnityEngine.GameObject",
+        "UnityEngine.AddressableAssets.AssetReferenceT<!0>"
+      ],
+      "returnType": "!0",
+      "genericArity": 1,
+      "genericArguments": [
+        "UnityEngine.Material"
+      ],
+      "capabilities": [
+        "Background"
+      ],
+      "rva": "0x75ddb0",
+      "prologue": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 50 49"
+    },
+    "capacityChartConstructor": {
+      "managedType": "Il2Cpp_b._T",
+      "assembly": "Game.dll",
+      "namespace": "_b",
+      "class": "_T",
+      "method": ".ctor",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CapacityPatch"
+      ],
+      "rva": "0x534670",
+      "prologue": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 80"
+    },
+    "capacitySideNoteConstructor": {
+      "managedType": "Il2Cpp_b._hA",
+      "assembly": "Game.dll",
+      "namespace": "_b",
+      "class": "_hA",
+      "method": ".ctor",
+      "parameterTypes": [],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CapacityPatch"
+      ],
+      "rva": "0x5352b0",
+      "prologue": "40 53 48 83 EC 30 80 3D A1 7E E0 02 00 48 8B D9"
+    },
+    "capacityJudgeConstructor": {
+      "managedType": "Il2Cpp_E._VD",
+      "assembly": "Game.dll",
+      "namespace": "_E",
+      "class": "_VD",
+      "method": ".ctor",
+      "parameterTypes": [
+        "Il2Cppifapp.Game.Data.DataAccess",
+        "Il2Cpp_E._sD"
+      ],
+      "returnType": "System.Void",
+      "genericArity": 0,
+      "capabilities": [
+        "CapacityPatch"
+      ],
+      "rva": "0x5f5790",
+      "prologue": "48 89 5C 24 10 48 89 6C 24 18 56 57 41 56 48 83"
+    }
+  }
+}

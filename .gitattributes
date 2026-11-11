@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.cs text eol=crlf
+*.csproj text eol=crlf
+*.json text eol=lf
+*.png binary
+*.dll binary
+*.zip binary
