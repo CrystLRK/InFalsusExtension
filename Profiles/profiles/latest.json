@@ -286,7 +286,7 @@
       "prologue": "48 89 4C 24 08 55 56 57 41 54 41 55 41 56 41 57"
     },
     "gameResultsTryUpdate": {
-      "assembly": "Game.dll",
+      "assembly": "Game.Data.dll",
       "namespace": "ifapp.Game.Data",
       "class": "GameResultsV4",
       "method": "TryUpdate",
@@ -305,7 +305,7 @@
       "prologue": "48 89 5C 24 10 48 89 74 24 18 55 57 41 57 48 8D"
     },
     "saveRequest": {
-      "assembly": "Game.dll",
+      "assembly": "Game.Data.dll",
       "namespace": "_K",
       "class": "_NH",
       "method": "_SoA",
@@ -322,7 +322,7 @@
       "prologue": "48 89 5C 24 08 57 48 83 EC 20 80 3D 09 5C E7 02"
     },
     "difficultyStatus": {
-      "assembly": "Game.dll",
+      "assembly": "Game.Data.dll",
       "namespace": "_K",
       "class": "_NH",
       "method": "_uoA",

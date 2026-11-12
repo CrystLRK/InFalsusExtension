@@ -1,5 +1,4 @@
 using HarmonyLib;
-using Il2Cppifapp.Game.Data;
 
 namespace InFalsusChartExt
 {
@@ -20,32 +19,6 @@ namespace InFalsusChartExt
         [HarmonyPostfix]
         private static void Postfix()
             => AutoplayScoreGuard.CompleteResultsStart();
-    }
-
-    [HarmonyPatch]
-    internal static class AutoplayResultUpdatePatch
-    {
-        [HarmonyPrepare]
-        private static bool Prepare()
-            => BuildProfile.Supports(
-                NativeCapability.AutoplayScoreGuard);
-
-        [HarmonyTargetMethod]
-        private static System.Reflection.MethodBase TargetMethod()
-            => NativePatchTargetResolver.ResolveHarmony(
-                "gameResultsTryUpdate");
-
-        [HarmonyPrefix]
-        private static bool Prefix(
-            ref long __2,
-            ref GameResultsV4.UpdateResult __result)
-        {
-            if (!AutoplayScoreGuard.ShouldSuppressResults)
-                return true;
-            __2 = 0;
-            __result = GameResultsV4.UpdateResult.NoChange;
-            return false;
-        }
     }
 
     [HarmonyPatch]

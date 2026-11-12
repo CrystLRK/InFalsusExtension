@@ -11,10 +11,15 @@ namespace InFalsusChartExt.CustomSong.Discovery
         internal static bool ShouldUnlock(
             in SongInfo songInfo,
             ChartDifficultyFlag difficulty)
+            => ShouldUnlock(songInfo.BaseName, difficulty);
+
+        internal static bool ShouldUnlock(
+            string baseName,
+            ChartDifficultyFlag difficulty)
         {
-            if (songInfo.BaseName == null ||
+            if (baseName == null ||
                 !Lifecycle.CustomSongRuntime.TryGetSongByBaseName(
-                    songInfo.BaseName,
+                    baseName,
                     out CustomSongPlan song))
                 return false;
             for (int i = 0; i < song.Charts.Count; i++)

@@ -21,6 +21,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             new List<OwnedAudio>();
         private static IntPtr _systemPointer;
         private static int _ownedErrors;
+        private static int _pauseErrors;
         private static bool _shutdownRequested;
         [ThreadStatic]
         private static Stack<Route> _routes;
@@ -29,6 +30,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             Waiting.Clear();
             _routes?.Clear();
             _ownedErrors = 0;
+            _pauseErrors = 0;
             ReleaseAllOwned();
             _shutdownRequested = false;
         }
@@ -43,7 +45,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             if (_shutdownRequested)
                 return;
             ReleaseDisposedControllerAudio();
-            StopSettledGameplayAudio();
+            SynchronizeGameplayAudioPause();
             for (int i = Waiting.Count - 1; i >= 0; i--)
             {
                 Pending pending = Waiting[i];
@@ -65,6 +67,7 @@ namespace InFalsusChartExt.CustomSong.Audio
         {
             Waiting.Clear();
             _ownedErrors = 0;
+            _pauseErrors = 0;
             ReleaseAllOwned();
         }
 
@@ -515,7 +518,12 @@ namespace InFalsusChartExt.CustomSong.Audio
             }
         }
 
-        private static void StopSettledGameplayAudio()
+        /// <summary>
+        /// Mirrors the native gameplay pause lifecycle for Mod-owned song
+        /// channels. Leaving gameplay pauses the channel instead of stopping
+        /// it, so resuming can continue from the same FMOD position.
+        /// </summary>
+        private static void SynchronizeGameplayAudioPause()
         {
             if (Owned.Count == 0)
                 return;
@@ -524,22 +532,46 @@ namespace InFalsusChartExt.CustomSong.Audio
             for (int i = 0; i < Owned.Count; i++)
             {
                 OwnedAudio owned = Owned[i];
-                if (owned.Selection || owned.Settled)
+                if (owned.Selection || owned.Channel == IntPtr.Zero)
                     continue;
                 if (gameplay)
                 {
                     owned.GameplayStarted = true;
+                    if (owned.PausedByExtension)
+                        SetOwnedPaused(owned, false);
                     continue;
                 }
-                if (!owned.GameplayStarted)
+                if (!owned.GameplayStarted || owned.PausedByExtension)
                     continue;
-                owned.Settled = true;
-                try
+                SetOwnedPaused(owned, true);
+            }
+        }
+
+        private static void SetOwnedPaused(
+            OwnedAudio owned,
+            bool paused)
+        {
+            // Latch the requested state before the native call. A transient
+            // failure must not turn this into a per-frame retry loop.
+            owned.PausedByExtension = paused;
+            try
+            {
+                int result = FmodExports.SetPaused(
+                    owned.Channel, paused);
+                if (result != 0 && _pauseErrors++ < 10)
                 {
-                    FmodExports.Stop(owned.Channel);
+                    ChartExtMod.Log.Warning(
+                        "[CustomSong] gameplay audio pause=" +
+                        $"{paused} failed: {result}");
                 }
-                catch
+            }
+            catch (Exception exception)
+            {
+                if (_pauseErrors++ < 10)
                 {
+                    ChartExtMod.Log.Warning(
+                        "[CustomSong] gameplay audio pause=" +
+                        $"{paused} failed: {exception.Message}");
                 }
             }
         }
@@ -626,7 +658,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             internal IntPtr Channel;
             internal bool Selection;
             internal bool GameplayStarted;
-            internal bool Settled;
+            internal bool PausedByExtension;
         }
     }
 }

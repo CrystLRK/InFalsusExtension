@@ -3,7 +3,7 @@ using MelonLoader;
 using InFalsusChartExt.CustomSong.Audio;
 using InFalsusChartExt.CustomSong.Lifecycle;
 
-[assembly: MelonInfo(typeof(InFalsusChartExt.ChartExtMod), "InFalsus Chart Ext", "0.1.0", "IFCE")]
+[assembly: MelonInfo(typeof(InFalsusChartExt.ChartExtMod), "InFalsus Chart Ext", "0.1.0-patch1", "IFCE")]
 [assembly: MelonGame("lowiro", "infalsus")]
 
 namespace InFalsusChartExt
@@ -16,6 +16,7 @@ namespace InFalsusChartExt
         {
             Log = LoggerInstance;
             BuildProfile.Initialize();
+            CustomDifficultyUnlockPatch.Install();
 
             // 谱面容量上限（4096 → 65536）：必须在任何谱面数据容器创建之前改写 il2cpp 立即数。
             NumericLimitPatch.Apply();
@@ -85,6 +86,8 @@ namespace InFalsusChartExt
         {
             CustomSongAudioController.PrepareForShutdown();
             ChartRuntimeLifecycle.Dispose();
+            AutoplayResultsUpdateNativePatch.Uninstall();
+            CustomDifficultyUnlockPatch.Uninstall();
             try { BackgroundNativeHook.Dispose(); }
             catch { }
             try { CustomSongRuntime.Dispose(); }

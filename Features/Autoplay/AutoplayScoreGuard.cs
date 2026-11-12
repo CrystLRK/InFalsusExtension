@@ -42,6 +42,8 @@ namespace InFalsusChartExt
                 if (judge == null ||
                     judge.Pointer == IntPtr.Zero)
                     return;
+                if (!AutoplayResultsUpdateNativePatch.Install())
+                    return;
                 _usedThisChart = true;
                 _freezeActive = true;
                 ChartExtMod.Log.Msg(

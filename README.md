@@ -1,116 +1,121 @@
 # InFalsusExtension
 
-**版本：0.1.0**
+**版本：0.1.0-patch1**
 
-InFalsusExtension 是面向 *In Falsus* 的 MelonLoader 扩展，用于加载自制曲包、
-扩展谱面语句、兼容游戏原版音符与 SkyArea 行为，并提供成绩、难度和显示相关
-辅助功能。
+InFalsusExtension 是适用于 *In Falsus* 的扩展工具，用于加载自制歌曲与
+曲包，并支持自制谱专用的显示、判定和辅助功能。
 
-**警告：本 Mod 极大程度上修改了原版逻辑，如发现 Bug 请直接带着日志和具体现象去提 Issue**
+## 主要功能
 
-## 功能
+- 加载按曲包整理的自制歌曲；
+- 支持 OGG、WAV、MP3 音频和独立试听音频；
+- 支持自定义封面、图片背景和视频背景；
+- 支持常见扩展谱面效果；
+- 为自制谱分别保存各难度的最佳成绩；
+- 自动解锁自制谱中实际提供的难度；
+- 提供 Autoplay 和仅自动判定地键模式；
+- 在游戏显示设置中增加真正独占全屏选项。
 
-- 加载 `CustomCharts/PackName/SongName` 结构的自制歌曲与曲包；
-- 支持 OGG、WAV、MP3，支持独立 preview、封面和图片/视频背景；
-- 支持 Studio+ / Falsum 导入后的自制谱配置、难度和曲包元数据；
-- 支持 timing group、noinput、noclip、showtext、setcolor、hidegroup、
-  trackmove、trackdisplay、scenecontrol 和 audio offset 等扩展语义；
-- 独立处理扩展 Bomb 的视觉与判定，保留原版反馈、文字锚点和计分链路；
-- SkyArea 按作者时间、几何和 timing group 在运行时分类，不使用手动
-  `skyareapack(...)` / `packpiece(...)` 语法；
-- 为自制谱保存独立最佳成绩，避免运行时 `SongId` 漂移导致成绩丢失；
-- 对自制谱 config 中实际提供的难度解除存档锁定限制；
-- 支持 Autoplay、ground-only 和 Autoplay 本局成绩抑制；
-- 在游戏显示设置中提供真正独占全屏选项；
-- 使用外部 native profile 校验当前游戏版本，未知版本默认关闭无法验证的
-  native 写入能力。
+## 使用要求
 
-## 环境要求
-
-- Windows 版 *In Falsus*；
-- 与游戏版本匹配的 MelonLoader；
-- .NET 6 运行环境；
-- 已验证的游戏 profile：
-  - `infalsus-1.0.5`
-  - `infalsus-latest`
-
-游戏更新后，如果 `GameAssembly.dll` 或 `global-metadata.dat` 哈希发生变化，
-扩展会自动选择匹配的 profile；没有匹配 profile 时会禁用无法验证的 native
-功能。不要直接把旧 profile 当作其他游戏版本可用。
+- Windows 版 *In Falsus* 正式版；不支持 Demo 版；
+- 游戏已正确安装 MelonLoader；
+- 使用与当前游戏版本匹配的 InFalsusExtension 发行包。
 
 ## 安装
 
-完全退出游戏后，将发布包解压并放入：
+1. 完全退出游戏；
+2. 解压 InFalsusExtension 发行包；
+3. 将发行包内的文件和文件夹放进游戏根目录；
+4. 确认游戏目录中至少存在：
+
+   ```text
+   In Falsus/
+     Mods/
+       InFalsusChartExt.dll
+       InFalsusChartExt/
+   ```
+
+5. 启动游戏。
+
+不要只替换 DLL 而保留其他版本的附属文件，也不要将不同发行包中的文件
+混合使用。
+
+## 更新
+
+更新前请完全退出游戏。建议先备份现有的 `Mods/InFalsusChartExt` 文件夹，
+然后用新发行包整体替换旧文件。
+
+## 导入自制谱
+
+推荐使用 [SPCConverter](https://github.com/CrystLRK/SPCConverter) 导入
+In Falsus Studio 工程或 Falsum 歌曲包。
+
+导入完成后完全退出并重新启动游戏，新歌曲和更新后的难度才会出现在曲库中。
+
+## 游戏内操作
+
+| 快捷键 | 功能 |
+|---|---|
+| `F7` | 切换仅自动判定地键：自动处理 Tap、Hold，Flick 和 SkyArea 仍需手动；开启时会同时启用 Autoplay |
+| `F8` | 打开或关闭扩展选项面板 |
+| `F9` | 打开或关闭 Autoplay |
+
+Autoplay 在每次启动游戏时都会恢复为关闭状态。默认情况下，本局只要开启过
+Autoplay，就不会写入成绩，结果页会显示 `AUTOPLAY`。
+
+## 自制谱成绩
+
+自制谱最佳成绩会自动保存到：
 
 ```text
-In Falsus/
-  Mods/
-    InFalsusChartExt.dll
-    InFalsusChartExt/
-      native-profiles.json
-      bomb.png
-      profiles/
-        current-105.json
-        latest.json
+Mods/InFalsusChartExt/custom-results.json
 ```
 
-目录说明：
+该文件只保存每个自制谱难度的最佳成绩。清理或迁移 Mod 时，可以一并备份
+此文件。
 
-- `InFalsusChartExt.dll`：MelonLoader 入口程序集；
-- `native-profiles.json`：游戏版本与 profile 的映射；
-- `profiles/*.json`：字段偏移、native target 和能力矩阵；
-- `bomb.png`：扩展 Bomb 使用的自定义贴图；
-- `custom-results.json`：首次运行后自动生成的自制谱最佳成绩文件。
+## 全屏模式
 
-替换 DLL 或 profile 前必须先关闭游戏，并建议备份：
+游戏显示设置中会提供窗口模式选项，其中包括真正独占全屏。切换模式后若
+游戏暂时失去焦点，返回游戏时会自动恢复所选模式。
 
-```text
-Mods/InFalsusChartExt.dll
-Mods/InFalsusChartExt/
-```
+## 常见问题
 
-## 自制谱导入
+### 游戏没有加载扩展
 
-推荐使用配套工具 **SPCConverter** 导入 Studio 工程或 Falsum 歌曲包。
+- 确认 MelonLoader 已正确安装；
+- 确认发行包已解压到游戏根目录；
+- 确认没有混用不同版本的 Mod 文件；
+- 查看 MelonLoader 日志中的报错信息。
 
-游戏读取的曲包结构：
+### 自制歌曲没有出现在曲库
 
-```text
-CustomCharts/
-  PackName/
-    pack_config.json
-    pack_jacket.png
-    SongName/
-      config.json
-      audio.ogg
-      jacketLarge.png
-      jacketSmall.png
-      chart.spc
-```
+- 使用最新版 SPCConverter 重新导入；
+- 确认导入到了当前正在游玩的游戏目录；
+- 完全退出并重新启动游戏。
 
-## 从源码构建
+### 歌曲没有声音或没有背景
 
-需要安装 .NET SDK 6 或更新版本，并准备已由 MelonLoader 生成互操作程序集
-的游戏目录：
+- 确认谱面中选择了实际存在的音频和背景文件；
+- 音频使用 OGG、WAV 或 MP3；
+- 背景使用 PNG、JPG、JPEG、WEBP 或 MP4；
+- 修改后重新导入并重启游戏。
 
-```powershell
-dotnet build .\InFalsusChartExt.csproj `
-  -c Release `
-  -p:GameDir="D:\Steam\steamapps\common\In Falsus"
-```
+### 游戏更新后无法使用
 
-构建输出包含：
+请等待与当前游戏版本匹配的新发行包。不要在游戏更新后继续混用旧版本
+文件。
 
-```text
-InFalsusChartExt.dll
-InFalsusChartExt/
-  native-profiles.json
-  bomb.png
-  profiles/
-```
+## 反馈问题
 
-如果更换游戏版本，需要重新生成或核对 profile 中的字段偏移、签名、RVA 和
-prologue；未验证的版本不会自动启用 native 写入。
+提交 Issue 时请附上：
+
+- 游戏版本；
+- InFalsusExtension 版本；
+- 可复现的操作步骤；
+- 对应歌曲、难度和时间点；
+- MelonLoader 日志。
 
 ## 许可证
 
