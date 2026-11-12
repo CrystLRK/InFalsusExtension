@@ -1,30 +1,186 @@
-# Visual Studio / MSBuild
-.vs/
-bin/
-obj/
+# Windows / editor metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
 *.user
 *.suo
 
-# Local game and generated runtime files
-GameAssembly.dll
-global-metadata.dat
-CustomCharts/
-Mods/
-UserData/
-build/
-output/
-
-# Reverse-engineering and crash artifacts
+# Game installation and proprietary reference binaries
+/In Falsus 1.0.5/
+/newVersion/
+/Il2CppDumper-v6.7.48-net8.0/
 *.i64
 *.id0
 *.id1
 *.id2
 *.nam
 *.til
-*.log
 
-# Local documentation and tests
-internal-docs/
+# Large third-party/reference checkouts
+/references/
+/In-Libertas-master/
+/InFalsusEditor/
+/InFalsusStudio+/
+/INFinite/
+/INFinite.Unity/
+/INFinite.BundleProbe/
+/INFinite.NativeLogic/
+
+# Internal development notes
+/AGENTS.md
+/TODO.md
+/工作原则.md
+/工作状态.md
+/项目工作规范.md
+/文档索引.md
+/测试谱索引.md
+/待测试.md
+/工作日志_*.md
+/测试_*.md
+/SkyBlock*.md
+/分析_*.md
+/分组机制*.md
+/原版差异审计_*.md
+/评审_*.md
+/修改方案_*.md
+/internal-docs/
+/dev-docs/
+/交接_*.md
+/压缩前交接_*.md
+/全项目开发要点_*.md
+/代码审查报告_*.md
+/代码审查重构草案_*.md
+/代码整改可行性评估_*.md
+/代码整改批准方案_*.md
+/跨版本兼容性评估_*.md
+/工作区目录清单_*.md
+/看我.txt
+/新项目内容，看我.txt
+/新语句方案.md
+/chart_packer.py
+/spc_v0_chart_decoder.py
+
+# Generated, reverse-engineering and temporary data
+/backups/
+/build/
+/publish/
+/output/
+/stable/
+/semi-stable/
+/temp_*/
+/tmp_*/
+/__pycache__/
+**/__pycache__/
+*.py[cod]
+**/bin/
+**/obj/
+
+# Large chart/reference collections
+/charts/
+/bd_charts/
+/charts_text/
+/charts107.zip
+/outliers（官壳不适配）/
+/Toutaku Subeshi/
+
+# SPCConverter generated release artifacts
+/SPCConverter/build/
+/SPCConverter/build-*/
+/SPCConverter/release/
+/*.falsum
+/SPCConverter/tests/
+
+# Stable binary artifacts remain reproducible; source/manifests may be tracked.
+/stable/**/*.dll
+/stable/**/*.exe
+/stable/**/*.lib
+/stable/**/*.exp
+/stable/**/*.pdb
+/stable/**/*.zip
+
+# Tool caches and generated analysis
+/tools/.nuget-cache/
+/tools/.nuget-local/
+/tools/.home/
+/tools/.tools/
+/tools/.appdata/
+/tools/AssetRipper-2.0.0/
+/tools/Decompiler/
+/tools/CodecTest/
+/tools/codec_test/
+/tools/demo_decomp/
+/tools/demo_decomp_filtered/
+/tools/demo_decomp_try/
+/tools/dotnet-dump6/
+/tools/dotnet-tools/
+/tools/ilspycmd/
+/tools/AssetRipper_win_x64.zip
+/tools/interop_dump.txt
+/tools/key_types.txt
+/tools/disasm_out.txt
+/tools/.gen_check.txt
+/tools/recon/
+/tools/shots/
+/tools/stock_charts/
+/tools/tex_preview/
+/tools/
+
+# Logs and screenshots
+*.log
+/preview*.png
+/unity-*.log
+/infinite-*.log
+
+# Obvious shell-error artifacts once confirmed safe to remove
+/-100.0'
+/-maxLeadMs'
+/(Join-Path
+/\$null
+/\$null)
+/32)
+/64
+/58_*.ogg
+/59_*.ogg
+/60_*.ogg
+
+# Temporary root-level conversion artifacts
+/temp_*.json
+/tmp_*.json
+/tmp_*.spc
+/test.spc.multi-noinput.bin
+/test.spc.multi-noinput.txt
+/test.spc.nospeed.bin
+/test.spc.positive-speed.bin
+/test.spc.prev-single-noinput.bin
+/test.spc.speed.bin
+/test.spc.staged-speed.bin
+/test.spc00
+
+# Large local binaries
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+/libcocos2dcpp.so
+
+# Test suites, inputs and generated test packages are intentionally local-only.
 tests/
 test/
+test-data/
 testdata/
+/*.spc
+/*.spc00
+/*.bin
+/*.ogg
+/*.text.json
+/demo_*.json
+/autoplay_ground_only_test.spc
+/flick_directions.spc
+/frame.spc
+/skyarea_slope_test.spc
+/test_ref.spc
+/test_ref.text.json
+/test1.spc
+/toutaku_subeshi*.spc

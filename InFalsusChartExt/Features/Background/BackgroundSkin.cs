@@ -43,8 +43,6 @@ namespace InFalsusChartExt
         private static int _findAttempts;
         private static int _nextFindFrame;
         private static int _findExhaustedGeneration = -1;
-        private static int _loggedQuadGeneration = -1;
-        private static int _loggedCandidateGeneration = -1;
         private static int _resolvedBackgroundGeneration = -1;
         private static string _resolvedBackgroundKey;
         private static string _resolvedBackgroundPath;
@@ -114,8 +112,6 @@ namespace InFalsusChartExt
             _findAttempts = 0;
             _nextFindFrame = 0;
             _findExhaustedGeneration = -1;
-            _loggedQuadGeneration = -1;
-            _loggedCandidateGeneration = -1;
             _resolvedBackgroundGeneration = -1;
             _resolvedBackgroundKey = null;
             _resolvedBackgroundPath = null;
@@ -333,23 +329,6 @@ namespace InFalsusChartExt
                             if (materialPtr == IntPtr.Zero) continue;
                             var material = new Material(materialPtr);
                             string materialName = material.name ?? string.Empty;
-                            if (_loggedQuadGeneration != ChartExtState.ChartGeneration && _logs < 100)
-                            {
-                                string texInfo = "?";
-                                try
-                                {
-                                    Texture main = material.mainTexture;
-                                    if (main != null && main.Pointer != IntPtr.Zero)
-                                        texInfo = main.width + "x" + main.height;
-                                }
-                                catch { }
-                                _logs++;
-                                ChartExtMod.Log.Msg(
-                                    "[ChartExt] quad candidate: go='" + quad.gameObject.name +
-                                    "' material='" + materialName + "' shader='" +
-                                    (material.shader != null ? material.shader.name : "?") +
-                                    "' tex=" + texInfo);
-                            }
                             if (!material.HasProperty("_BlueNoiseMap") &&
                                 !materialName.EndsWith("BGMaterial", StringComparison.OrdinalIgnoreCase))
                                 continue;
@@ -362,7 +341,6 @@ namespace InFalsusChartExt
                             TryApply(material);
                             return;
                         }
-                        _loggedQuadGeneration = ChartExtState.ChartGeneration;
                     }
                 }
                 catch (Exception e)
@@ -402,13 +380,6 @@ namespace InFalsusChartExt
                                 if (component == null || component.Pointer == IntPtr.Zero)
                                     continue;
                                 string className = NativeClassName(component);
-                                if (_logs < 160)
-                                {
-                                    _logs++;
-                                    ChartExtMod.Log.Msg(
-                                        "[ChartExt] background class: go='" + goName +
-                                        "' cls='" + className + "'");
-                                }
                                 IntPtr quadPtr = IntPtr.Zero;
                                 if (className == "Constrained2D")
                                     quadPtr = component.Pointer;
@@ -456,23 +427,6 @@ namespace InFalsusChartExt
                     Material material = renderer.sharedMaterial;
                     if (material == null || material.Pointer == IntPtr.Zero)
                         continue;
-                    if (_loggedCandidateGeneration != ChartExtState.ChartGeneration && _logs < 140)
-                    {
-                        string texInfo = "?";
-                        try
-                        {
-                            Texture main = material.mainTexture;
-                            if (main != null && main.Pointer != IntPtr.Zero)
-                                texInfo = main.width + "x" + main.height;
-                        }
-                        catch { }
-                        _logs++;
-                        ChartExtMod.Log.Msg(
-                            "[ChartExt] background candidate: go='" + renderer.gameObject.name +
-                            "' material='" + material.name + "' shader='" +
-                            (material.shader != null ? material.shader.name : "?") +
-                            "' tex=" + texInfo);
-                    }
                     bool isBackground;
                     try
                     {
@@ -494,7 +448,6 @@ namespace InFalsusChartExt
                     TryApply(material);
                     return;
                 }
-                _loggedCandidateGeneration = ChartExtState.ChartGeneration;
             }
             catch (Exception e)
             {

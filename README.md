@@ -1,6 +1,6 @@
 # InFalsusExtension
 
-**版本：0.1.0-patch1**
+**版本：0.1.0-patch2**
 
 InFalsusExtension 是适用于 *In Falsus* 的扩展工具，用于加载自制歌曲与
 曲包，并支持自制谱专用的显示、判定和辅助功能。

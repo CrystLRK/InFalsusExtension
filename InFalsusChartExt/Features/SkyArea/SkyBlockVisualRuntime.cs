@@ -88,6 +88,8 @@ namespace InFalsusChartExt
                     OnChartCompiled();
                 if (_entries.Length != plan.VisualMembers.Count)
                     return;
+                if (TimingGroupRuntime.IsResumeTransition())
+                    return;
 
                 double now =
                     TimingGroupRuntime.CurrentMs();
@@ -227,8 +229,13 @@ namespace InFalsusChartExt
                 {
                     for (int i = 0; i < _entries.Length; i++)
                     {
+                        // A pause/resume can move the shared clock backward by
+                        // a fraction of a frame. Destroying every entry here
+                        // made paused SkyAreas reappear from prefab-space and
+                        // be rebuilt over several frames. Keep ownership and
+                        // hide until the rebuilt active set updates in place.
                         if (_entries[i] != null)
-                            ReleaseMember(_entries[i].Member);
+                            Hide(_entries[i]);
                     }
                 }
                 while (_cursor < plan.VisualMembers.Count)
@@ -967,6 +974,144 @@ namespace InFalsusChartExt
                 ? frame?.SkyBlocks
                 : null;
         }
+
+#if IFCE_DIAGNOSTICS
+        internal static string DiagnosticSnapshot(
+            Il2Cppifapp.Game.Scenes.Game.Track track,
+            double now)
+        {
+            var text = new System.Text.StringBuilder(1024);
+            double depth =
+                BitConverter.Int64BitsToDouble(
+                    Marshal.ReadInt64(
+                        track.Pointer +
+                        NativeLayoutCatalog.Track.DepthFactor));
+            double baseSpeed =
+                BitConverter.Int64BitsToDouble(
+                    Marshal.ReadInt64(
+                        track.Pointer +
+                        NativeLayoutCatalog.Track.BaseSpeed));
+            double rawNow = double.NaN;
+            try
+            {
+                Il2Cpp_E._VD judge =
+                    Il2Cppifapp.Game.Scenes.GameScene._DN;
+                if (judge != null &&
+                    judge.Pointer != IntPtr.Zero)
+                    rawNow = judge._c * 1000.0;
+            }
+            catch { }
+            Vector3 notesLocal =
+                track.notesContainer.localPosition;
+            Vector3 notesWorld =
+                track.notesContainer.position;
+            text.Append("now=")
+                .Append(now.ToString("F1"))
+                .Append(" raw=")
+                .Append(rawNow.ToString("F1"))
+                .Append(" depth=")
+                .Append(depth.ToString("F4"))
+                .Append(" base=")
+                .Append(baseSpeed.ToString("F4"))
+                .Append(" notesLocalZ=")
+                .Append(notesLocal.z.ToString("F4"))
+                .Append(" notesWorldZ=")
+                .Append(notesWorld.z.ToString("F4"))
+                .Append(" active=")
+                .Append(ActiveMembers.Count);
+            int emitted = 0;
+            AppendActiveFlicks(
+                text, "left", track._QMA, ref emitted);
+            AppendActiveFlicks(
+                text, "right", track._rMA, ref emitted);
+            for (int i = 0;
+                 i < ActiveMembers.Count && emitted < 5;
+                 i++)
+            {
+                SkyBlockMember member = ActiveMembers[i];
+                if (member.VisualIndex < 0 ||
+                    member.VisualIndex >= _entries.Length)
+                    continue;
+                Entry entry = _entries[member.VisualIndex];
+                if (entry?.Band == null)
+                    continue;
+                double nativeLead = double.NaN;
+                if (SkyBlockRuntimeSlots.TryNote(
+                        member, out IntPtr note))
+                {
+                    nativeLead =
+                        BitConverter.Int64BitsToDouble(
+                            Marshal.ReadInt64(
+                                note +
+                                NativeLayoutCatalog.Note
+                                    .RuntimeLead));
+                }
+                Vector3 local =
+                    entry.Band.transform.localPosition;
+                text.Append(" {id=")
+                    .Append(member.Id)
+                    .Append(",group=")
+                    .Append(member.TimingGroup)
+                    .Append(",start=")
+                    .Append(member.StartMs)
+                    .Append(",end=")
+                    .Append(member.EndMs)
+                    .Append(",lead=")
+                    .Append(nativeLead.ToString("F1"))
+                    .Append(",z=")
+                    .Append(local.z.ToString("F4"))
+                    .Append('}');
+                emitted++;
+            }
+            return text.ToString();
+        }
+
+        private static void AppendActiveFlicks(
+            System.Text.StringBuilder text,
+            string side,
+            Il2Cpp_k._Lg<Il2Cpp.FlickNoteV3> pool,
+            ref int emitted)
+        {
+            if (pool == null ||
+                pool.Pointer == IntPtr.Zero)
+                return;
+            var iterator = pool._A;
+            try
+            {
+                while (emitted < 5 &&
+                       iterator.MoveNext())
+                {
+                    var item = iterator.Current;
+                    GameObject gameObject = item.Item2;
+                    Transform transform = item.Item3;
+                    if (gameObject == null ||
+                        transform == null ||
+                        !gameObject.activeSelf)
+                        continue;
+                    Vector3 local =
+                        transform.localPosition;
+                    Vector3 world =
+                        transform.position;
+                    text.Append(" {flick=")
+                        .Append(side)
+                        .Append(",flag=")
+                        .Append(item.Item1 ? 1 : 0)
+                        .Append(",localX=")
+                        .Append(local.x.ToString("F4"))
+                        .Append(",localZ=")
+                        .Append(local.z.ToString("F4"))
+                        .Append(",worldZ=")
+                        .Append(world.z.ToString("F4"))
+                        .Append('}');
+                    emitted++;
+                }
+            }
+            finally
+            {
+                iterator.Dispose();
+            }
+        }
+#endif
 
         private static bool IsFinite(double value)
             => !double.IsNaN(value) &&

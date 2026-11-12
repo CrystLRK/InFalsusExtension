@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using HarmonyLib;
-using MelonLoader;
 using UnityEngine;
 
 namespace InFalsusChartExt
@@ -313,189 +312,42 @@ namespace InFalsusChartExt
         }
     }
 
-    /// <summary>
-    /// Temporary latest-build compatibility probe. Logs only the first frame of
-    /// each chart generation and keeps the original visual call order.
-    /// Remove after the latest-build visual entry issue is resolved.
-    /// </summary>
-    internal static class LatestTrackVisualDiagnostics
-    {
-        private static readonly HashSet<string> Completed =
-            new HashSet<string>(StringComparer.Ordinal);
-        private static bool _prepareLogged;
-        private static bool _targetLogged;
-        private static int _traceGeneration = int.MinValue;
-        private static int _lastGeneration = int.MinValue;
-
-        internal static bool ReportPrepare(bool available)
-        {
-            if (!_prepareLogged)
-            {
-                _prepareLogged = true;
-                Write($"trackUpdate prepare available={available}");
-            }
-            return available;
-        }
-
-        internal static System.Reflection.MethodBase ReportTarget(
-            System.Reflection.MethodBase target)
-        {
-            if (!_targetLogged)
-            {
-                _targetLogged = true;
-                int configuredToken =
-                    NativeAbiProfileStore.Selected is not null &&
-                    NativeAbiProfileStore.Selected.PatchTargets
-                        .TryGetValue(
-                            "trackUpdate",
-                            out NativePatchTargetProfile profileTarget)
-                        ? profileTarget.ManagedMetadataToken
-                        : 0;
-                Write(target == null
-                    ? "trackUpdate target resolved=null"
-                    : "trackUpdate target=" +
-                      target.DeclaringType?.FullName + "." +
-                      target.Name +
-                      $" token=0x{target.MetadataToken:X8}" +
-                      $" profileToken=0x{configuredToken:X8}");
-            }
-            return target;
-        }
-
-        internal static void ReportFailure(
-            string stage,
-            Exception exception)
-        {
-            Write($"{stage} failed: {exception.GetType().Name}: " +
-                  exception.Message);
-        }
-
-        internal static void BeginPostfix(
-            Il2Cppifapp.Game.Scenes.Game.Track track)
-        {
-            try
-            {
-                int generation = ChartExtState.ChartGeneration;
-                if (generation == _lastGeneration)
-                    return;
-                _lastGeneration = generation;
-                _traceGeneration = generation;
-                Completed.Clear();
-                ChartRuntimeFrame frame =
-                    ChartRuntimeContext.IsActive
-                        ? ChartRuntimeContext.Current
-                        : null;
-                SkyBlockPlan sky = frame?.SkyBlocks;
-                BombPlan bombs = frame?.Bombs;
-                Write(
-                    $"track postfix entered gen={generation} " +
-                    $"frame={Time.frameCount} " +
-                    $"track={(track == null ? 0 : track.Pointer.ToInt64()):X} " +
-                    $"context={(frame != null)} " +
-                    $"visualChart={frame?.VisualChart?.Notes.Count ?? 0} " +
-                    $"trackMoves={ChartExtState.TrackMoves.Count} " +
-                    $"groupedSlots={ChartExtState.GroupedSlots.Count} " +
-                    $"skySlots={ChartExtState.SkyAreaSlots.Count} " +
-                    $"speedEvents={ChartExtState.SpeedEvents.Count} " +
-                    $"groupSpeeds={ChartExtState.GroupSpeeds.Count} " +
-                    $"sceneControls={ChartExtState.SceneControls.Count} " +
-                    $"skyVisual={sky?.VisualMembers.Count ?? 0} " +
-                    $"skyJudge={sky?.JudgeMembers.Count ?? 0} " +
-                    $"bombs={bombs?.NativeMembers.Count ?? 0}");
-            }
-            catch (Exception exception)
-            {
-                ReportFailure("track diagnostic begin", exception);
-            }
-        }
-
-        internal static void Mark(string subsystem)
-        {
-            if (ChartExtState.ChartGeneration != _traceGeneration ||
-                Completed.Count >= 18 ||
-                !Completed.Add(subsystem))
-                return;
-            Write($"track postfix completed={subsystem}");
-        }
-
-        private static void Write(string message)
-        {
-            try
-            {
-                if (ChartExtMod.Log is not null)
-                    ChartExtMod.Log.Msg("[LatestDiag] " + message);
-                else
-                    MelonLogger.Msg("[LatestDiag] " + message);
-            }
-            catch
-            {
-            }
-        }
-    }
-
     [HarmonyPatch]
     internal static class TrackTickPatch
     {
         [HarmonyPrepare]
         private static bool Prepare() =>
-            LatestTrackVisualDiagnostics.ReportPrepare(
-                NativePatchTargetResolver.IsAvailable("trackUpdate"));
+            NativePatchTargetResolver.IsAvailable("trackUpdate");
 
         [HarmonyTargetMethod]
         private static System.Reflection.MethodBase TargetMethod()
         {
-            try
-            {
-                return LatestTrackVisualDiagnostics.ReportTarget(
-                    NativePatchTargetResolver.ResolveHarmony(
-                        "trackUpdate"));
-            }
-            catch (Exception exception)
-            {
-                LatestTrackVisualDiagnostics.ReportFailure(
-                    "trackUpdate target", exception);
-                throw;
-            }
+            return NativePatchTargetResolver.ResolveHarmony(
+                "trackUpdate");
         }
 
         [HarmonyPostfix]
         private static void Postfix(Il2Cppifapp.Game.Scenes.Game.Track __instance)
         {
-            LatestTrackVisualDiagnostics.BeginPostfix(__instance);
-
+            RegressionDiagnostics.TrackTick(__instance);
             TrackMoveRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("track-move");
             SceneControlRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("scene-control");
             SkyColorRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("sky-color");
             BackgroundSkin.Tick();
-            LatestTrackVisualDiagnostics.Mark("background");
             TimingNoInputSkyVisualRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("noinput-sky");
             VisualNoteRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("visual-notes");
             TimingGroupRuntime.Restore();
-            LatestTrackVisualDiagnostics.Mark("timing-restore");
             TimingGroupVisualRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("timing-visual");
             ShowTextRuntime.EnsureLoaded();
-            LatestTrackVisualDiagnostics.Mark("showtext");
             // JudgeListFilter disabled for now: the game rebuilds the judge list every
             // frame after this postfix, so the strip does not reliably precede the
             // judge tick. The filter will be re-attached at the list's source instead.
             BombSkinRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("bomb");
             AudioOffsetRuntime.Tick();
-            LatestTrackVisualDiagnostics.Mark("audio-offset");
             HideGroupSkyColorRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("hidegroup-color");
             NormalSkyInternalEdgeRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("normal-sky-edge");
             SkyBlockVisualRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("skyblock-visual");
             SkyBlockLineGlowRuntime.Tick(__instance);
-            LatestTrackVisualDiagnostics.Mark("skyblock-line-glow");
         }
     }
 

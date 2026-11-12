@@ -25,6 +25,10 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static bool _shutdownRequested;
         [ThreadStatic]
         private static Stack<Route> _routes;
+#if IFCE_DIAGNOSTICS
+        [ThreadStatic]
+        private static Stack<FactoryDiagnostic> _diagnostics;
+#endif
         internal static void Reset()
         {
             Waiting.Clear();
@@ -33,6 +37,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             _pauseErrors = 0;
             ReleaseAllOwned();
             _shutdownRequested = false;
+            RegressionDiagnostics.Reset();
         }
 
         internal static void PrepareForShutdown()
@@ -46,6 +51,7 @@ namespace InFalsusChartExt.CustomSong.Audio
                 return;
             ReleaseDisposedControllerAudio();
             SynchronizeGameplayAudioPause();
+            RegressionDiagnostics.AudioTick();
             for (int i = Waiting.Count - 1; i >= 0; i--)
             {
                 Pending pending = Waiting[i];
@@ -56,7 +62,10 @@ namespace InFalsusChartExt.CustomSong.Audio
                     Waiting.RemoveAt(i);
                     continue;
                 }
-                if (!TryGetNativeSound(pending.Controller, out _))
+                if (!TryGetNativeSound(pending.Controller, out _) ||
+                    !TryGetNativeChannel(
+                        pending.Controller, out _) ||
+                    !IsNativeAudioConfigured(pending.Controller))
                     continue;
                 Waiting.RemoveAt(i);
                 TryReplace(pending);
@@ -69,6 +78,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             _ownedErrors = 0;
             _pauseErrors = 0;
             ReleaseAllOwned();
+            RegressionDiagnostics.Reset();
         }
 
         [HarmonyPatch]
@@ -90,6 +100,11 @@ namespace InFalsusChartExt.CustomSong.Audio
                 ref string __0,
                 bool __6)
             {
+#if IFCE_DIAGNOSTICS
+                _diagnostics ??= new Stack<FactoryDiagnostic>();
+                _diagnostics.Push(
+                    new FactoryDiagnostic(__0, __6));
+#endif
                 _routes ??= new Stack<Route>();
                 if (!BuildProfile.Supports(
                         NativeCapability.CustomSong) ||
@@ -110,20 +125,39 @@ namespace InFalsusChartExt.CustomSong.Audio
             [HarmonyPostfix]
             private static void Postfix(_Cg __result)
             {
+#if IFCE_DIAGNOSTICS
+                FactoryDiagnostic diagnostic =
+                    _diagnostics is not null &&
+                    _diagnostics.Count > 0
+                        ? _diagnostics.Pop()
+                        : null;
+                RegressionDiagnostics.AudioFactory(
+                    diagnostic?.Name,
+                    diagnostic?.Selection ?? false,
+                    __result);
+#endif
                 Route route =
                     _routes is not null && _routes.Count > 0
                         ? _routes.Pop()
                         : null;
                 if (route?.Song is null || __result is null)
                     return;
+#if IFCE_DISABLE_CUSTOM_AUDIO
+                // Keep the Prefix template-name mapping, but skip the
+                // independent audio replacement in this diagnostic build.
+                return;
+#else
                 var pending = new Pending(
                     __result,
                     route.Song,
                     route.Selection);
-                if (TryGetNativeSound(__result, out _))
+                if (TryGetNativeSound(__result, out _) &&
+                    TryGetNativeChannel(__result, out _) &&
+                    IsNativeAudioConfigured(__result))
                     TryReplace(pending);
                 else
                     Waiting.Add(pending);
+#endif
             }
         }
 
@@ -285,6 +319,12 @@ namespace InFalsusChartExt.CustomSong.Audio
                     replacement.handle,
                     replacementChannel.handle,
                     pending.Selection);
+                RegressionDiagnostics.AudioOwned(
+                    "replace",
+                    pending.Selection,
+                    controller.Pointer,
+                    replacement.handle,
+                    replacementChannel.handle);
 
                 ChartExtMod.Log.Msg(
                     $"[CustomSong] audio " +
@@ -380,6 +420,36 @@ namespace InFalsusChartExt.CustomSong.Audio
                     controller.Pointer,
                     NativeLayoutCatalog.CustomSong.AudioSound));
             return sound != IntPtr.Zero;
+        }
+
+        private static bool TryGetNativeChannel(
+            _Cg controller,
+            out IntPtr channel)
+        {
+            channel = IntPtr.Zero;
+            if (controller is null ||
+                controller.Pointer == IntPtr.Zero)
+            {
+                return false;
+            }
+            channel = Marshal.ReadIntPtr(
+                IntPtr.Add(
+                    controller.Pointer,
+                    NativeLayoutCatalog.CustomSong.AudioChannel));
+            return channel != IntPtr.Zero;
+        }
+
+        private static bool IsNativeAudioConfigured(_Cg controller)
+        {
+            if (controller is null ||
+                controller.Pointer == IntPtr.Zero)
+            {
+                return false;
+            }
+            return Marshal.ReadByte(
+                IntPtr.Add(
+                    controller.Pointer,
+                    NativeLayoutCatalog.CustomSong.AudioConfigured)) != 0;
         }
 
         private static bool IsMpegAudioFile(string path)
@@ -497,9 +567,26 @@ namespace InFalsusChartExt.CustomSong.Audio
                     IntPtr currentChannel = Marshal.ReadIntPtr(
                         controllerPointer +
                         NativeLayoutCatalog.CustomSong.AudioChannel);
-                    if (currentSound == owned.Sound &&
-                        currentChannel == owned.Channel)
+                    if (currentSound == owned.Sound)
+                    {
+                        // The native factory may return before its caller
+                        // creates the gameplay Channel. Sound identity still
+                        // proves that the controller uses our replacement;
+                        // adopt the late Channel instead of releasing the
+                        // active audio.
+                        if (currentChannel != IntPtr.Zero &&
+                            currentChannel != owned.Channel)
+                        {
+                            RegressionDiagnostics.AudioOwned(
+                                "adopt-channel",
+                                owned.Selection,
+                                controllerPointer,
+                                owned.Sound,
+                                currentChannel);
+                            owned.Channel = currentChannel;
+                        }
                         continue;
+                    }
                     Owned.RemoveAt(i);
                     ReleaseOwned(owned);
                 }
@@ -587,6 +674,12 @@ namespace InFalsusChartExt.CustomSong.Audio
         {
             if (ShouldDeferNativeRelease())
                 return;
+            RegressionDiagnostics.AudioOwned(
+                "release",
+                owned.Selection,
+                owned.ControllerPointer,
+                owned.Sound,
+                owned.Channel);
             try
             {
                 if (owned.Channel != IntPtr.Zero)
@@ -630,6 +723,22 @@ namespace InFalsusChartExt.CustomSong.Audio
             internal CustomSongPlan Song { get; }
             internal bool Selection { get; }
         }
+
+#if IFCE_DIAGNOSTICS
+        private sealed class FactoryDiagnostic
+        {
+            internal FactoryDiagnostic(
+                string name,
+                bool selection)
+            {
+                Name = name ?? string.Empty;
+                Selection = selection;
+            }
+
+            internal string Name { get; }
+            internal bool Selection { get; }
+        }
+#endif
 
         private sealed class Pending
         {

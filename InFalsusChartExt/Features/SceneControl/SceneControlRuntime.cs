@@ -75,7 +75,6 @@ namespace InFalsusChartExt
         private static int _emissionColorId;
         private static bool _idsReady;
         private static float _appliedAlpha = -1f;
-        private static int _logs;
         private static int _errors;
         private static Mesh _screenShadowMesh;
         private static Material _screenShadowMaterial;
@@ -561,7 +560,6 @@ namespace InFalsusChartExt
                 _idsReady = true;
             }
             if (_tintBlock == null || _clearBlock == null) return;
-            bool changed = Math.Abs(alpha - _appliedAlpha) >= 0.0001f;
             _appliedAlpha = alpha;
             // A renderer may be activated or receive a new native material
             // after alpha has already reached a steady value. ApplyRenderer's
@@ -571,10 +569,6 @@ namespace InFalsusChartExt
                 ApplyRenderer(TrackRenderers[i], alpha);
             ApplyMeasureLines(alpha);
             UpdateScreenShadow(track, alpha);
-            if (changed && _logs++ < 8)
-                ChartExtMod.Log.Msg(
-                    $"[ChartExt] scenecontrol trackdisplay alpha={alpha:F3} " +
-                    $"renderers={TrackRenderers.Count}");
         }
 
         private static void ApplyMeasureLines(float alpha)

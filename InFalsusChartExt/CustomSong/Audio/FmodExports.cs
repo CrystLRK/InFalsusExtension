@@ -57,6 +57,19 @@ namespace InFalsusChartExt.CustomSong.Audio
             IntPtr channel,
             out int paused);
 
+#if IFCE_DIAGNOSTICS
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        internal delegate int ChannelIsPlaying(
+            IntPtr channel,
+            out int playing);
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        internal delegate int ChannelGetPosition(
+            IntPtr channel,
+            out uint position,
+            uint positionType);
+#endif
+
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         internal delegate int ChannelStop(IntPtr channel);
 
@@ -73,6 +86,10 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static ChannelSetPosition _setPosition;
         private static ChannelSetPaused _setPaused;
         private static ChannelGetPaused _getPaused;
+#if IFCE_DIAGNOSTICS
+        private static ChannelIsPlaying _isPlaying;
+        private static ChannelGetPosition _getPosition;
+#endif
         private static ChannelStop _stop;
         private static SoundRelease _release;
 
@@ -148,6 +165,25 @@ namespace InFalsusChartExt.CustomSong.Audio
                 "FMOD5_Channel_GetPaused",
                 "FMOD_Channel_GetPaused"))(
                     channel, out paused);
+
+#if IFCE_DIAGNOSTICS
+        internal static int IsPlaying(
+            IntPtr channel,
+            out int playing) =>
+            (_isPlaying ??= Resolve<ChannelIsPlaying>(
+                "FMOD5_Channel_IsPlaying",
+                "FMOD_Channel_IsPlaying"))(
+                    channel, out playing);
+
+        internal static int GetPosition(
+            IntPtr channel,
+            out uint position,
+            uint type) =>
+            (_getPosition ??= Resolve<ChannelGetPosition>(
+                "FMOD5_Channel_GetPosition",
+                "FMOD_Channel_GetPosition"))(
+                    channel, out position, type);
+#endif
 
         internal static int Stop(IntPtr channel) =>
             (_stop ??= Resolve<ChannelStop>(

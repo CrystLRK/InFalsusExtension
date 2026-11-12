@@ -26,7 +26,6 @@ namespace InFalsusChartExt
             ActiveHolds =
                 new List<ChartExtState.AutoplayDue>();
         private static double _lastNow = -1e9;
-        private static int _logs;
         private static int _errors;
 
         internal static bool Enabled
@@ -146,7 +145,6 @@ namespace InFalsusChartExt
                 double now = NowMs();
                 if (double.IsNaN(now)) return;
 
-                int rewritten = 0, forced = 0;
                 for (int i = _cursor; i < dues.Count; i++)
                 {
                     ChartExtState.AutoplayDue due = dues[i];
@@ -155,9 +153,7 @@ namespace InFalsusChartExt
                     if (due.StartMs < now - 5000.0) continue;
                     RewriteDue(
                         due,
-                        records,
-                        ref rewritten,
-                        ref forced);
+                        records);
                 }
                 for (int i = 0; i < ActiveHolds.Count; i++)
                 {
@@ -166,15 +162,7 @@ namespace InFalsusChartExt
                         continue;
                     RewriteDue(
                         due,
-                        records,
-                        ref rewritten,
-                        ref forced);
-                }
-                if ((rewritten > 0 || forced > 0) && _logs < 30)
-                {
-                    _logs++;
-                    ChartExtMod.Log.Msg($"[ChartExt] autoplay: rewrote {rewritten} judged records, " +
-                                        $"forced {forced} expired-unjudged records (now={now:F0})");
+                        records);
                 }
             }
             catch (Exception e)
@@ -187,9 +175,7 @@ namespace InFalsusChartExt
             ChartExtState.AutoplayDue due,
             Il2CppSystem.Collections.Generic.Dictionary<
                 long,
-                Il2CppSystem.Memory<Il2Cpp_K._cH>> records,
-            ref int rewritten,
-            ref int forced)
+                Il2CppSystem.Memory<Il2Cpp_K._cH>> records)
         {
             if (SkyBlockJudgeRuntime.IsManagedMember(due.Id))
                 return;
@@ -240,7 +226,6 @@ namespace InFalsusChartExt
                         {
                             *(record + InteropUtil.JudgmentOffset) =
                                 ChartExtState.JudgeShiny;
-                            rewritten++;
                         }
                     }
                     else
@@ -256,7 +241,6 @@ namespace InFalsusChartExt
                         {
                             *(record + InteropUtil.JudgmentOffset) =
                                 ChartExtState.JudgeShiny;
-                            forced++;
                         }
                     }
                 }

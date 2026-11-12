@@ -79,6 +79,7 @@ namespace InFalsusChartExt
             try
             {
                 if (track == null || track.Pointer == IntPtr.Zero) return;
+                if (TimingGroupRuntime.IsResumeTransition()) return;
                 if (!EnsureChart(track)) return;
 
                 double now = TimingGroupRuntime.CurrentMs();

@@ -57,6 +57,12 @@ namespace InFalsusChartExt
                     _generation = plan.Generation;
                     _lastActiveMs = double.NegativeInfinity;
                 }
+                if (TimingGroupRuntime.IsVisualClockPaused ||
+                    TimingGroupRuntime.IsResumeTransition())
+                {
+                    ReleaseIfActive(track);
+                    return;
+                }
 
                 Il2Cpp.JudgementLineMeshEffect effect =
                     track.judgementLineMeshEffect;

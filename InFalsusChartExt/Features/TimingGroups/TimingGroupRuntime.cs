@@ -27,9 +27,8 @@ namespace InFalsusChartExt
         private static int _lastFrame = -1;
         private static int _iaSkipLogs;
         private static int _restoreSkipLogs;
-        private static bool _wasPaused;
-        private static double _pauseStartRawMs;
-        private static double _pauseOffsetMs;
+        private static bool _visualClockPaused;
+        private static double _visualClockHoldMs;
         private static SpeedCurve _globalCurve;
         private static readonly Dictionary<int, SpeedCurve> GroupCurves =
             new Dictionary<int, SpeedCurve>();
@@ -478,9 +477,8 @@ namespace InFalsusChartExt
             try { Restore(); }
             catch { }
             _lastFrame = -1;
-            _wasPaused = false;
-            _pauseStartRawMs = 0.0;
-            _pauseOffsetMs = 0.0;
+            _visualClockPaused = false;
+            _visualClockHoldMs = 0.0;
         }
 
         /// <summary>
@@ -788,33 +786,40 @@ namespace InFalsusChartExt
             Il2Cpp_E._VD judge = Il2Cppifapp.Game.Scenes.GameScene._DN;
             if (judge == null || judge.Pointer == IntPtr.Zero) return double.NaN;
             double raw = judge._c * 1000.0;
-            if (IsPaused())
+            if ((byte)Il2Cpp_E._VD._a != 2)
             {
-                if (!_wasPaused)
+                if (!_visualClockPaused)
                 {
-                    _wasPaused = true;
-                    _pauseStartRawMs = raw;
+                    _visualClockPaused = true;
+                    _visualClockHoldMs = raw;
                 }
-                return _pauseStartRawMs - _pauseOffsetMs;
+                return _visualClockHoldMs;
             }
-            if (_wasPaused)
-            {
-                _pauseOffsetMs += raw - _pauseStartRawMs;
-                _wasPaused = false;
-            }
-            return raw - _pauseOffsetMs;
+            _visualClockPaused = false;
+            return raw;
         }
 
-        private static bool IsPaused()
+        internal static double CurrentMs() => NowMs();
+
+        internal static bool IsVisualClockPaused =>
+            _visualClockPaused;
+
+        /// <summary>
+        /// The pause layer remains active during the resume transition. Mod
+        /// visuals must hold their last pose until control returns to gameplay.
+        /// </summary>
+        internal static bool IsPauseLayerActive()
         {
             try
             {
                 var scene =
                     Il2Cppifapp.Game.Scenes.GameScene._xn;
-                if (scene == null || scene.Pointer == IntPtr.Zero)
+                if (scene == null ||
+                    scene.Pointer == IntPtr.Zero)
                     return false;
                 var pause = scene.pauseLayer;
-                return pause != null && pause.Pointer != IntPtr.Zero &&
+                return pause != null &&
+                       pause.Pointer != IntPtr.Zero &&
                        pause.gameObject != null &&
                        pause.gameObject.activeSelf;
             }
@@ -824,7 +829,11 @@ namespace InFalsusChartExt
             }
         }
 
-        internal static double CurrentMs() => NowMs();
+        internal static bool IsResumeTransition()
+        {
+            return (byte)Il2Cpp_E._VD._a == 2 &&
+                   IsPauseLayerActive();
+        }
 
         /// <summary>
         /// Conservative noClip tail length derived from the current track

@@ -59,7 +59,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="assets\bomb.png"
+    <None Include="..\assets\Mods\InFalsusChartExt\bomb.png"
           Link="InFalsusChartExt\bomb.png"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
