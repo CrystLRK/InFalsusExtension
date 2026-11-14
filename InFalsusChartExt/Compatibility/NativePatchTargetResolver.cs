@@ -62,13 +62,20 @@ namespace InFalsusChartExt
                     NativeAbiProfileStore.Selected
                     ?? throw new InvalidOperationException(
                         "native profile is unavailable");
+                var failures = new List<string>();
                 foreach (KeyValuePair<string, NativePatchTargetProfile>
                          item in profile.PatchTargets)
                 {
-                    _ = ResolveManagedMethod(item.Value);
+                    Resolution resolution =
+                        ResolveManaged(item.Key);
+                    if (!resolution.Success)
+                        failures.Add(
+                            item.Key + ": " + resolution.Error);
                 }
-                error = null;
-                return true;
+                error = failures.Count == 0
+                    ? null
+                    : string.Join("; ", failures);
+                return failures.Count == 0;
             }
             catch (Exception exception)
             {

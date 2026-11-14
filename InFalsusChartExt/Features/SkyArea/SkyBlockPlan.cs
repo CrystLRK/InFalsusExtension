@@ -48,6 +48,9 @@ namespace InFalsusChartExt
 
         internal int RuntimeGroup;
         internal int VisualIndex = -1;
+        internal double VisualStartMs;
+        internal double VisualEndMs;
+        internal int VisualTimingGeneration = -1;
         internal SkyBlock Block;
         internal SkyGroupState GroupState;
         internal bool IsFirst = true;
@@ -118,7 +121,6 @@ namespace InFalsusChartExt
         internal bool Covered;
         internal bool Latch;
         internal bool RedLatched;
-        internal bool HeadSoundPlayed;
         internal SkyBlockMember GlowOwner;
         internal double WarningMs;
         internal double PenaltyMs;

@@ -301,6 +301,20 @@ namespace InFalsusChartExt
 
                     if (!active)
                     {
+#if IFCE_DIAGNOSTICS
+                        if (descriptor.Kind == VisualNoteKind.Hold &&
+                            descriptor.Lifetime == VisualNoteLifetime.NoInput &&
+                            Instances.ContainsKey(descriptor.VisualId))
+                        {
+                            ChartExtMod.Log.Msg(
+                                "[r7-hold] destroy " +
+                                $"id={descriptor.SourceId} " +
+                                $"group={descriptor.TimingGroup} " +
+                                $"now={frame.NowMs:F1} " +
+                                $"startLead={startLead:F1} " +
+                                $"endLead={endLead:F1}");
+                        }
+#endif
                         DestroyInstance(descriptor.VisualId);
                         continue;
                     }

@@ -60,6 +60,8 @@ namespace InFalsusChartExt
                 return;
             ChartExtState.TransformSnapshot transform = null;
             ChartRuntimeFrame preparedRuntime = null;
+            Il2CppSystem.ReadOnlySpan<byte> originalSpan = span;
+            bool spanReplaced = false;
             try
             {
                 int length = span._length;
@@ -586,12 +588,16 @@ namespace InFalsusChartExt
                 if (preparedRuntime == null)
                     throw new InvalidOperationException(
                         "chart runtime frame could not be prepared");
-                span = new Il2CppSystem.ReadOnlySpan<byte>(
+                var replacementSpan =
+                    new Il2CppSystem.ReadOnlySpan<byte>(
                     (Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppArrayBase<byte>)(object)managed);
-                ChartExtState.CommitTransform(transform);
-                transform = null;
+                ChartRuntimeLifecycle.DisposeForChartTransform();
+                span = replacementSpan;
+                spanReplaced = true;
                 ChartRuntimeContext.InstallPrepared(preparedRuntime);
                 preparedRuntime = null;
+                ChartExtState.CommitTransform(transform);
+                transform = null;
 
                 ChartExtMod.Log.Msg($"[ChartExt] transformed via {source}: key='{key}' {length}->{encoded.Length} bytes, " +
                                     $"(ptr {resolvedVia}) notes {chart.Notes.Count}, events {chart.Events.Count}, " +
@@ -602,6 +608,8 @@ namespace InFalsusChartExt
             {
                 ChartRuntimeContext.DiscardPrepared(preparedRuntime);
                 ChartExtState.RollbackTransform(transform);
+                if (spanReplaced)
+                    span = originalSpan;
                 if (_logged < 80) { _logged++; ChartExtMod.Log.Error($"[ChartExt] transform failed ({source}): {e}"); }
             }
         }

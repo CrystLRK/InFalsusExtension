@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace InFalsusChartExt
@@ -7,15 +8,23 @@ namespace InFalsusChartExt
     /// Native-path rendering for timinggroup visual note types.
     ///
     /// `_hb` builds the active-note dictionary, and Track.Update enumerates that
-    /// same dictionary while using `_IA[id]` as the render time. A grouped flick
-    /// can therefore be rendered by the original Track/FlickNoteV3/HoldNote pools:
+    /// same dictionary while using `_IA[id]` as the render time. Grouped Hold,
+    /// Flick and SkyArea can therefore be rendered by the original pools:
     /// keep the original type, append its already-compiled slot to the active list
     /// when its group visual lead enters the native window, and let the native
     /// renderer handle parent, scale, fade, length and judgement lifecycle.
+    /// Tap remains under TimingGroupVisualRuntime ownership because it is
+    /// flipped to a non-rendering sentinel type before this injection point.
     /// </summary>
     internal static class TimingGroupNativeFlickRuntime
     {
         private static int _errors;
+#if IFCE_DIAGNOSTICS
+        private static readonly HashSet<long> DiagnosticInjected =
+            new HashSet<long>();
+        private static int _diagnosticGeneration = -1;
+        private static int _diagnosticLogs;
+#endif
 
         internal static void InjectSpawnList(
             Il2CppSystem.Collections.Generic.Dictionary<
@@ -38,11 +47,22 @@ namespace InFalsusChartExt
                 double maxLeadMs = Math.Min(2000.0, Math.Abs(a / b) * 1000.0);
                 double nowMs = TimingGroupRuntime.CurrentMs();
                 if (double.IsNaN(nowMs)) return;
+#if IFCE_DIAGNOSTICS
+                if (_diagnosticGeneration !=
+                    ChartExtState.ChartGeneration)
+                {
+                    _diagnosticGeneration =
+                        ChartExtState.ChartGeneration;
+                    DiagnosticInjected.Clear();
+                    _diagnosticLogs = 0;
+                }
+#endif
 
                 for (int i = 0; i < ChartExtState.GroupedSlots.Count; i++)
                 {
                     ChartExtState.GroupSlot slot = ChartExtState.GroupedSlots[i];
-                    if (slot.Type != 2 && slot.Type != 4 && slot.Type != 5)
+                    if (slot.Type != 2 && slot.Type != 4 &&
+                        slot.Type != 5)
                         continue;
                     if (!TimingGroupRuntime.TryResolveGroupedSlot(
                             slot, out IntPtr note, out _, false))
@@ -62,7 +82,24 @@ namespace InFalsusChartExt
                     if (!lists.ContainsKey(key)) continue;
                     var list = lists[key];
                     if (list == null || list.Pointer == IntPtr.Zero) continue;
-                    AppendUnique(list.Pointer, slot.Position, visualLead);
+                    bool appended =
+                        AppendUnique(list.Pointer, slot.Position);
+#if IFCE_DIAGNOSTICS
+                    long diagnosticKey =
+                        ((long)(uint)slot.Side << 32) |
+                        (uint)slot.Position;
+                    if (appended &&
+                        _diagnosticLogs < 32 &&
+                        DiagnosticInjected.Add(diagnosticKey))
+                    {
+                        _diagnosticLogs++;
+                        ChartExtMod.Log.Msg(
+                            "[timing-spawn] " +
+                            $"group={slot.Group} type={slot.Type} " +
+                            $"side={slot.Side} pos={slot.Position} " +
+                            $"visualLead={visualLead:F1}");
+                    }
+#endif
                 }
             }
             catch (Exception e)
@@ -73,23 +110,25 @@ namespace InFalsusChartExt
             }
         }
 
-        private static void AppendUnique(IntPtr list, int position, double lead)
+        private static bool AppendUnique(IntPtr list, int position)
         {
             IntPtr arr = Marshal.ReadIntPtr(
                 list + NativeLayoutCatalog.Runtime.ListItems);
             int count = Marshal.ReadInt32(
                 list + NativeLayoutCatalog.Runtime.ListCount);
-            if (arr == IntPtr.Zero || count < 0) return;
+            if (arr == IntPtr.Zero || count < 0) return false;
             int capacity = Marshal.ReadInt32(
                 arr + NativeLayoutCatalog.ArrayLengthOffset);
-            if (count > capacity) return;
+            if (count > capacity) return false;
             IntPtr data = arr + NativeLayoutCatalog.ArrayDataOffset;
             for (int i = 0; i < count; i++)
-                if (Marshal.ReadInt32(data + 4 * i) == position) return;
-            if (count >= capacity) return;
+                if (Marshal.ReadInt32(data + 4 * i) == position)
+                    return false;
+            if (count >= capacity) return false;
             Marshal.WriteInt32(data + 4 * count, position);
             Marshal.WriteInt32(
                 list + NativeLayoutCatalog.Runtime.ListCount, count + 1);
+            return true;
         }
     }
 }

@@ -27,6 +27,9 @@ namespace InFalsusChartExt
                 new List<ChartExtState.AutoplayDue>();
         private static double _lastNow = -1e9;
         private static int _errors;
+#if IFCE_DIAGNOSTICS
+        private static int _r7LateWrites;
+#endif
 
         internal static bool Enabled
         {
@@ -36,9 +39,10 @@ namespace InFalsusChartExt
                 if (_enabled == value) return;
                 _enabled = value;
                 ResetCursors();
+                if (_enabled &&
+                    !AutoplayScoreGuard.EnsureRunGuard())
+                    _enabled = false;
                 try { ChartExtMod.Log.Msg($"[ChartExt] autoplay {(_enabled ? "ON" : "OFF")}"); } catch { }
-                if (_enabled)
-                    AutoplayScoreGuard.NoteAutoplayUsed();
             }
         }
 
@@ -72,7 +76,12 @@ namespace InFalsusChartExt
             if (!_enabled) return;
             try
             {
-                AutoplayScoreGuard.NoteAutoplayUsed();
+                if (!AutoplayScoreGuard.EnsureRunGuard())
+                {
+                    _enabled = false;
+                    ResetCursors();
+                    return;
+                }
                 if (ChartExtState.AutoplayDues.Count == 0) return;
                 double now = NowMs();
                 if (double.IsNaN(now)) return;
@@ -134,6 +143,12 @@ namespace InFalsusChartExt
             if (!_enabled) return;
             try
             {
+                if (!AutoplayScoreGuard.EnsureRunGuard())
+                {
+                    _enabled = false;
+                    ResetCursors();
+                    return;
+                }
                 List<ChartExtState.AutoplayDue> dues = ChartExtState.AutoplayDues;
                 if (dues.Count == 0) return;
                 Il2Cppifapp.Game.LogicalNotePlayer player = Il2Cppifapp.Game.LogicalNotePlayer._Qe;
@@ -239,6 +254,18 @@ namespace InFalsusChartExt
                         if (v25 <= -150.0 &&
                             judgment != ChartExtState.JudgeShiny)
                         {
+#if IFCE_DIAGNOSTICS
+                            if (_r7LateWrites++ < 20)
+                            {
+                                ChartExtMod.Log.Msg(
+                                    "[r7-autoplay-late] " +
+                                    $"id={due.Id} type={due.Type} " +
+                                    $"side={due.Side} " +
+                                    $"position={due.Position} " +
+                                    $"start={due.StartMs} " +
+                                    $"record={r} rel={rel:F1}");
+                            }
+#endif
                             *(record + InteropUtil.JudgmentOffset) =
                                 ChartExtState.JudgeShiny;
                         }

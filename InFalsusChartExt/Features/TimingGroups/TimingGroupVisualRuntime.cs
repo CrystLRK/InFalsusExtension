@@ -22,6 +22,13 @@ namespace InFalsusChartExt
             new Dictionary<long, VisualEntry>();
         private static IntPtr _track;
         private static GameObject _template;
+        private static GameObject _sideLeftTemplate;
+        private static GameObject _sideRightTemplate;
+        private static List<Material> _templateMaterials;
+        private static List<Material> _sideLeftTemplateMaterials;
+        private static List<Material> _sideRightTemplateMaterials;
+        private static Il2Cppifapp.Game.Scenes.Game.Track.__c
+            _tapPoolCallback;
         private static Transform _parent;
         private static float _rootY;
         private static Quaternion _rootRot = Quaternion.identity;
@@ -30,6 +37,12 @@ namespace InFalsusChartExt
         private static string _chartKey;
         private static int _chartGeneration = -1;
         private static int _errors;
+#if IFCE_DIAGNOSTICS
+        private static readonly HashSet<long> DiagnosticEntries =
+            new HashSet<long>();
+        private static int _diagnosticGeneration = -1;
+        private static int _diagnosticLogs;
+#endif
 
         private readonly struct FlipTarget
         {
@@ -56,6 +69,8 @@ namespace InFalsusChartExt
             public float RootY;
             public Quaternion RootRot;
             public Vector3 RootScale;
+            public readonly List<Material> OwnedMaterials =
+                new List<Material>(4);
         }
 
         internal static void RegisterTap(
@@ -64,6 +79,7 @@ namespace InFalsusChartExt
             if (live == null || live.Pointer == IntPtr.Zero || _template != null)
                 return;
             GameObject tpl = null;
+            List<Material> materials = null;
             try
             {
                 string liveName = "";
@@ -81,12 +97,14 @@ namespace InFalsusChartExt
                 tpl = UnityEngine.Object.Instantiate(root.gameObject);
                 tpl.name = "IFCE_TGTapTemplate";
                 tpl.SetActive(false);
-                CloneMaterials(tpl);
+                materials = CloneMaterials(tpl);
                 _template = tpl;
+                _templateMaterials = materials;
+                materials = null;
             }
             catch (Exception e)
             {
-                DestroyOwnedMaterials(tpl);
+                DestroyMaterials(materials);
                 try
                 {
                     if (tpl != null)
@@ -211,6 +229,11 @@ namespace InFalsusChartExt
                     _chartGeneration = chartGeneration;
                     DestroyEntries();
                     DestroyTemplates();
+#if IFCE_DIAGNOSTICS
+                    DiagnosticEntries.Clear();
+                    _diagnosticGeneration = chartGeneration;
+                    _diagnosticLogs = 0;
+#endif
                 }
                 EnsureTapTemplate(track);
                 if (_track != track.Pointer)
@@ -219,25 +242,12 @@ namespace InFalsusChartExt
                     DestroyEntries();
                 }
 
-                IntPtr t = track.Pointer;
-                double a = BitConverter.Int64BitsToDouble(
-                    Marshal.ReadInt64(
-                        t + NativeLayoutCatalog.Track.BaseSpeed));
-                double b = BitConverter.Int64BitsToDouble(
-                    Marshal.ReadInt64(
-                        t + NativeLayoutCatalog.Track.DepthFactor));
-                if (Math.Abs(a) < 1e-9 || Math.Abs(b) < 1e-9) return;
-                double s = (a / 3.333333334) * b / 1000.0;
-                double maxLeadMs =
-                    VisualSpawnTiming.MaxLeadMs(a, b);
-                double nowMs = TimingGroupRuntime.CurrentMs();
-                if (double.IsNaN(nowMs)) return;
-                IntPtr lanesObj = Marshal.ReadIntPtr(
-                    t + NativeLayoutCatalog.Track.LaneCenters);
-                float laneScale = BitConverter.Int32BitsToSingle(
-                    Marshal.ReadInt32(
-                        t + NativeLayoutCatalog.Track.NoteWidthScale));
-                if (lanesObj == IntPtr.Zero) return;
+                if (!VisualTrackFrame.TryCapture(
+                        track, out VisualTrackFrame frame) ||
+                    !frame.IsValid)
+                    return;
+                double maxLeadMs = frame.MaxLeadMs;
+                double nowMs = frame.NowMs;
 
                 var slots = ChartExtState.GroupedSlots;
                 for (int i = 0; i < slots.Count; i++)
@@ -258,7 +268,7 @@ namespace InFalsusChartExt
                         note + NativeLayoutCatalog.Note.Lane);
                     int width = Marshal.ReadInt32(
                         note + NativeLayoutCatalog.Note.PackedStartWidth);
-                    if (lane < 1 || lane > 4) continue;
+                    if (lane < 0 || lane > 5) continue;
                     double lead = TimingGroupRuntime.VisualTimeMs(slot.Group, be) -
                                   TimingGroupRuntime.VisualTimeMs(slot.Group, nowMs);
                     bool consumed = Marshal.ReadByte(
@@ -278,27 +288,74 @@ namespace InFalsusChartExt
 
                     if (!Entries.TryGetValue(id, out VisualEntry e))
                     {
-                        e = CreateEntry();
+                        e = CreateEntry(lane);
                         if (e == null) continue;
                         Entries[id] = e;
+#if IFCE_DIAGNOSTICS
+                        if (_diagnosticGeneration != chartGeneration)
+                        {
+                            DiagnosticEntries.Clear();
+                            _diagnosticGeneration = chartGeneration;
+                            _diagnosticLogs = 0;
+                        }
+                        if (_diagnosticLogs < 64 &&
+                            DiagnosticEntries.Add(id))
+                        {
+                            _diagnosticLogs++;
+                            ChartExtMod.Log.Msg(
+                                "[timing-tap] " +
+                                $"group={slot.Group} lane={lane} " +
+                                $"width={width} pose=" +
+                                $"{(lane == 0 ? "side-left" : lane == 5 ? "side-right" : "center")}");
+                        }
+#endif
                     }
-                    float mnALane = BitConverter.Int32BitsToSingle(
-                        Marshal.ReadInt32(
-                            lanesObj + NativeLayoutCatalog.ArrayDataOffset +
-                            4 * (lane - 1)));
-                    float x = (laneScale * 0.125f) * (width - 1) + mnALane;
-                    float z = (float)(s * lead);
                     Transform tr = e.Go.transform;
-                    tr.localPosition = new Vector3(x, e.RootY, z);
-                    tr.localRotation = e.RootRot;
-                    tr.localScale = new Vector3(e.RootScale.x,
-                        1f + 0.09765625f * z, e.RootScale.z);
+                    double distance = frame.Distance(lead);
+                    float normalized =
+                        VisualTapNoteInstance.NormalizedDistance(
+                            in frame,
+                            distance);
+                    if (lane >= 1 && lane <= 4)
+                    {
+                        tr.localPosition = new Vector3(
+                            frame.LaneX(lane, width),
+                            0f,
+                            (float)distance);
+                        tr.localRotation = frame.CenterRotation;
+                        tr.localScale = new Vector3(
+                            width * frame.CenterScale.x,
+                            2f * normalized + frame.CenterScale.y,
+                            frame.CenterScale.z);
+                    }
+                    else if (lane == 0)
+                    {
+                        tr.localPosition = new Vector3(
+                            frame.SideLeftPosition.x,
+                            frame.SideLeftPosition.y,
+                            frame.SideLeftPosition.z +
+                            (float)distance);
+                        tr.localRotation = frame.SideLeftRotation;
+                        tr.localScale = new Vector3(
+                            1.08f,
+                            frame.SideScaleY,
+                            2f * normalized + frame.SideScaleZ);
+                    }
+                    else
+                    {
+                        tr.localPosition = new Vector3(
+                            frame.SideRightPosition.x,
+                            frame.SideRightPosition.y,
+                            frame.SideRightPosition.z +
+                            (float)distance);
+                        tr.localRotation = frame.SideRightRotation;
+                        tr.localScale = new Vector3(
+                            1.08f,
+                            frame.SideScaleY,
+                            2f * normalized + frame.SideScaleZ);
+                    }
 
-                    float alpha;
-                    double xn = Math.Abs(lead) / 1000.0 * Math.Abs(b / a);
-                    double fade = Math.Max(
-                        0.0, Math.Min(1.0, (1.0 - xn) / 0.1));
-                    alpha = (float)((3.0 - 2.0 * fade) * fade * fade);
+                    float alpha = frame.Alpha(lead, false);
                     if (e.Note != null && e.Note.Pointer != IntPtr.Zero)
                         e.Note._ybA(alpha);
                     if (!e.Go.activeSelf) e.Go.SetActive(true);
@@ -321,24 +378,29 @@ namespace InFalsusChartExt
             DestroyTemplates();
         }
 
-        private static VisualEntry CreateEntry()
+        private static VisualEntry CreateEntry(int lane)
         {
             GameObject go = null;
+            List<Material> materials = null;
             try
             {
-                GameObject source = _template;
+                GameObject source = lane == 0
+                    ? _sideLeftTemplate
+                    : lane == 5
+                        ? _sideRightTemplate
+                        : _template;
                 if (source == null) return null;
+                Transform sourceTransform = source.transform;
                 go = UnityEngine.Object.Instantiate(source);
                 go.name = "IFCE_TGTap";
                 Transform tr = go.transform;
                 if (_parent != null && _parent.Pointer != IntPtr.Zero)
                     tr.SetParent(_parent, false);
-                tr.localPosition = new Vector3(tr.localPosition.x, _rootY,
-                    tr.localPosition.z);
-                tr.localRotation = _rootRot;
-                tr.localScale = _rootScale;
-                go.layer = _rootLayer;
-                CloneMaterials(go);
+                tr.localPosition = sourceTransform.localPosition;
+                tr.localRotation = sourceTransform.localRotation;
+                tr.localScale = sourceTransform.localScale;
+                go.layer = source.layer;
+                materials = CloneMaterials(go);
                 go.SetActive(true);
                 var note = go.GetComponent<Il2Cppifapp.Game.Scenes.Game.TapNote>();
                 var mr2 = Marshal.ReadIntPtr(
@@ -353,15 +415,21 @@ namespace InFalsusChartExt
                         note.Pointer +
                         NativeLayoutCatalog.TapNote.RuntimeMaterial,
                         mr2.material.Pointer);
-                return new VisualEntry
+                ApplyTapGuideSetting(go, tr, note);
+                var result = new VisualEntry
                 {
                     Go = go, Note = note, Renderer = mr2,
-                    RootY = _rootY, RootRot = _rootRot, RootScale = _rootScale
+                    RootY = tr.localPosition.y,
+                    RootRot = tr.localRotation,
+                    RootScale = tr.localScale,
                 };
+                result.OwnedMaterials.AddRange(materials);
+                materials = null;
+                return result;
             }
             catch (Exception e)
             {
-                DestroyOwnedMaterials(go);
+                DestroyMaterials(materials);
                 try
                 {
                     if (go != null)
@@ -375,8 +443,11 @@ namespace InFalsusChartExt
             }
         }
 
-        private static GameObject CloneTemplate(GameObject prefab, string name)
+        private static GameObject CloneTemplate(
+            GameObject prefab, string name,
+            out List<Material> materials)
         {
+            materials = null;
             if (prefab == null || prefab.Pointer == IntPtr.Zero) return null;
             GameObject tpl = null;
             try
@@ -384,12 +455,13 @@ namespace InFalsusChartExt
                 tpl = UnityEngine.Object.Instantiate(prefab);
                 tpl.name = name;
                 tpl.SetActive(false);
-                CloneMaterials(tpl);
+                materials = CloneMaterials(tpl);
                 return tpl;
             }
             catch
             {
-                DestroyOwnedMaterials(tpl);
+                DestroyMaterials(materials);
+                materials = null;
                 try
                 {
                     if (tpl != null)
@@ -403,11 +475,8 @@ namespace InFalsusChartExt
         private static void EnsureTapTemplate(
             Il2Cppifapp.Game.Scenes.Game.Track track)
         {
-            if (_template != null) return;
             try
             {
-                _template = CloneTemplate(track.notePrefab,
-                    "IFCE_TGTapTemplate");
                 if (_parent == null)
                 {
                     try { _parent = track.transform.Find("NotesContainer"); }
@@ -417,6 +486,42 @@ namespace InFalsusChartExt
                         var found = GameObject.Find("NotesContainer");
                         if (found != null) _parent = found.transform;
                     }
+                }
+                if (_template == null)
+                {
+                    _template = CloneTemplate(
+                        track.notePrefab,
+                        "IFCE_TGTapTemplate",
+                        out _templateMaterials);
+                    ApplyTapGuideSetting(
+                        _template,
+                        _template?.transform,
+                        _template?.GetComponent<
+                            Il2Cppifapp.Game.Scenes.Game.TapNote>());
+                }
+                if (_sideLeftTemplate == null)
+                {
+                    _sideLeftTemplate = CloneTemplate(
+                        track.sideNotePrefab,
+                        "IFCE_TGTapSideLeftTemplate",
+                        out _sideLeftTemplateMaterials);
+                    ApplyTapGuideSetting(
+                        _sideLeftTemplate,
+                        _sideLeftTemplate?.transform,
+                        _sideLeftTemplate?.GetComponent<
+                            Il2Cppifapp.Game.Scenes.Game.TapNote>());
+                }
+                if (_sideRightTemplate == null)
+                {
+                    _sideRightTemplate = CloneTemplate(
+                        track.sideNoteAltPrefab,
+                        "IFCE_TGTapSideRightTemplate",
+                        out _sideRightTemplateMaterials);
+                    ApplyTapGuideSetting(
+                        _sideRightTemplate,
+                        _sideRightTemplate?.transform,
+                        _sideRightTemplate?.GetComponent<
+                            Il2Cppifapp.Game.Scenes.Game.TapNote>());
                 }
                 if (_template != null)
                 {
@@ -430,15 +535,63 @@ namespace InFalsusChartExt
             catch { }
         }
 
-        private static void CloneMaterials(GameObject root)
+        private static void ApplyTapGuideSetting(
+            GameObject gameObject,
+            Transform root,
+            Il2Cppifapp.Game.Scenes.Game.TapNote note)
         {
-            var mrs = root.GetComponentsInChildren<MeshRenderer>(true);
-            if (mrs == null) return;
-            for (int i = 0; i < mrs.Length; i++)
+            if (gameObject == null || root == null || note == null)
+                return;
+            try
             {
-                var mr = mrs[i];
-                if (mr == null || mr.sharedMaterial == null) continue;
-                mr.material = new Material(mr.sharedMaterial);
+                _tapPoolCallback ??= new
+                    Il2Cppifapp.Game.Scenes.Game.Track.__c();
+                var tuple = new Il2CppSystem.ValueTuple<
+                    GameObject,
+                    Transform,
+                    Il2Cppifapp.Game.Scenes.Game.TapNote>(
+                        gameObject, root, note);
+                _tapPoolCallback._LBA(tuple);
+            }
+            catch { }
+        }
+
+        private static List<Material> CloneMaterials(GameObject root)
+        {
+            var owned = new List<Material>(4);
+            if (root == null || root.Pointer == IntPtr.Zero)
+                return owned;
+            try
+            {
+                var mrs =
+                    root.GetComponentsInChildren<MeshRenderer>(true);
+                for (int i = 0;
+                     mrs != null && i < mrs.Length;
+                     i++)
+                {
+                    MeshRenderer renderer = mrs[i];
+                    if (renderer == null ||
+                        renderer.sharedMaterial == null)
+                        continue;
+                    Material clone = new Material(
+                        renderer.sharedMaterial);
+                    try
+                    {
+                        renderer.sharedMaterial = clone;
+                        owned.Add(clone);
+                    }
+                    catch
+                    {
+                        UnityEngine.Object.Destroy(clone);
+                        throw;
+                    }
+                }
+                return owned;
+            }
+            catch
+            {
+                DestroyMaterials(owned);
+                throw;
             }
         }
 
@@ -446,7 +599,8 @@ namespace InFalsusChartExt
         {
             foreach (var e in Entries.Values)
             {
-                DestroyOwnedMaterials(e.Go);
+                DestroyMaterials(e.OwnedMaterials);
+                e.OwnedMaterials.Clear();
                 try { if (e.Go != null) UnityEngine.Object.Destroy(e.Go); }
                 catch { }
             }
@@ -455,10 +609,29 @@ namespace InFalsusChartExt
 
         private static void DestroyTemplates()
         {
-            DestroyOwnedMaterials(_template);
+            DestroyMaterials(_templateMaterials);
+            _templateMaterials = null;
+            DestroyMaterials(_sideLeftTemplateMaterials);
+            _sideLeftTemplateMaterials = null;
+            DestroyMaterials(_sideRightTemplateMaterials);
+            _sideRightTemplateMaterials = null;
             try { if (_template != null) UnityEngine.Object.Destroy(_template); }
             catch { }
+            try
+            {
+                if (_sideLeftTemplate != null)
+                    UnityEngine.Object.Destroy(_sideLeftTemplate);
+            }
+            catch { }
+            try
+            {
+                if (_sideRightTemplate != null)
+                    UnityEngine.Object.Destroy(_sideRightTemplate);
+            }
+            catch { }
             _template = null;
+            _sideLeftTemplate = null;
+            _sideRightTemplate = null;
             _parent = null;
             _rootY = 0f;
             _rootRot = Quaternion.identity;
@@ -466,20 +639,23 @@ namespace InFalsusChartExt
             _rootLayer = 0;
         }
 
-        private static void DestroyOwnedMaterials(GameObject root)
+        private static void DestroyMaterials(
+            IReadOnlyList<Material> materials)
         {
-            if (root == null || root.Pointer == IntPtr.Zero) return;
-            try
+            if (materials == null)
+                return;
+            for (int i = 0; i < materials.Count; i++)
             {
-                var renderers = root.GetComponentsInChildren<MeshRenderer>(true);
-                for (int i = 0; renderers != null && i < renderers.Length; i++)
+                Material material = materials[i];
+                try
                 {
-                    Material material = renderers[i]?.sharedMaterial;
                     if (material != null && material.Pointer != IntPtr.Zero)
                         UnityEngine.Object.Destroy(material);
                 }
+                catch
+                {
+                }
             }
-            catch { }
         }
     }
 

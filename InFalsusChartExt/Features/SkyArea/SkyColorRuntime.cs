@@ -59,6 +59,10 @@ namespace InFalsusChartExt
         private static readonly float[] SourceColor = new float[4];
         private static readonly float[] OutputColor = new float[4];
         private static Transform _notesContainer;
+        private static IntPtr _cursorTransformPtr;
+        private static Transform _cursorTransform;
+        private static IntPtr _cursorRendererPtr;
+        private static MeshRenderer _cursorRenderer;
         private static MaterialPropertyBlock _tintBlock;
         private static MaterialPropertyBlock _clearBlock;
         private static int _baseColorId;
@@ -123,6 +127,10 @@ namespace InFalsusChartExt
                 BracketRenderers.Clear();
                 BracketRendererPtrs.Clear();
                 _notesContainer = null;
+                _cursorTransformPtr = IntPtr.Zero;
+                _cursorTransform = null;
+                _cursorRendererPtr = IntPtr.Zero;
+                _cursorRenderer = null;
                 _bracketCacheReady = false;
                 _bracketCacheRefreshFrame = 0;
                 _generation = -1;
@@ -309,8 +317,10 @@ namespace InFalsusChartExt
                     track.Pointer + NativeLayoutCatalog.Track.SkyCursorRenderer);
                 if (cursorTransformPtr != IntPtr.Zero && cursorRendererPtr != IntPtr.Zero)
                 {
-                    var cursorTransform = new Transform(cursorTransformPtr);
-                    var cursorRenderer = new MeshRenderer(cursorRendererPtr);
+                    Transform cursorTransform =
+                        GetCursorTransform(cursorTransformPtr);
+                    MeshRenderer cursorRenderer =
+                        GetCursorRenderer(cursorRendererPtr);
                     if (TryZoneColorAt(cursorTransform.position, out uint rgba))
                         ApplyTint(cursorRenderer, rgba);
                     else
@@ -320,6 +330,28 @@ namespace InFalsusChartExt
                 }
             }
             catch { }
+        }
+
+        private static Transform GetCursorTransform(IntPtr pointer)
+        {
+            if (_cursorTransform == null ||
+                _cursorTransformPtr != pointer)
+            {
+                _cursorTransformPtr = pointer;
+                _cursorTransform = new Transform(pointer);
+            }
+            return _cursorTransform;
+        }
+
+        private static MeshRenderer GetCursorRenderer(IntPtr pointer)
+        {
+            if (_cursorRenderer == null ||
+                _cursorRendererPtr != pointer)
+            {
+                _cursorRendererPtr = pointer;
+                _cursorRenderer = new MeshRenderer(pointer);
+            }
+            return _cursorRenderer;
         }
 
         private static void RebuildBracketCache()
@@ -505,11 +537,13 @@ namespace InFalsusChartExt
         {
             var key = (source, rgba, edgeGlow);
             if (Clones.TryGetValue(key, out var cached)) return cached;
+            Il2Cppifapp.Game.Scenes.Game.SafeAreaColorDetails clone =
+                null;
             try
             {
                 var sourceObject =
                     new Il2Cppifapp.Game.Scenes.Game.SafeAreaColorDetails(source);
-                var clone = UnityEngine.Object.Instantiate(sourceObject);
+                clone = UnityEngine.Object.Instantiate(sourceObject);
                 if (clone == null || clone.Pointer == IntPtr.Zero) return null;
                 clone.name = $"IFCE_SkyColor_{rgba:X8}";
                 ApplyDefaultColors(
@@ -519,6 +553,14 @@ namespace InFalsusChartExt
             }
             catch (Exception e)
             {
+                try
+                {
+                    if (clone != null && clone.Pointer != IntPtr.Zero)
+                        UnityEngine.Object.Destroy(clone);
+                }
+                catch
+                {
+                }
                 if (_errors++ < 20)
                     ChartExtMod.Log.Error("[ChartExt] setcolor clone failed: " + e);
                 return null;

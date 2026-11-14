@@ -161,9 +161,17 @@ namespace InFalsusChartExt.CustomSong.Assets
                 image.Height,
                 TextureFormat.RGBA32,
                 false);
-            texture.LoadRawTextureData(image.RgbaBottomUp);
-            texture.Apply(false, false);
-            return texture;
+            try
+            {
+                texture.LoadRawTextureData(image.RgbaBottomUp);
+                texture.Apply(false, false);
+                return texture;
+            }
+            catch
+            {
+                UnityEngine.Object.Destroy(texture);
+                throw;
+            }
         }
 
         private static byte[] Decompress(

@@ -97,6 +97,15 @@ namespace InFalsusChartExt
                     "[BuildProfile] core ABI validation failed; native-write " +
                     "features disabled:\n" + validationError);
             }
+            if (profile.Abi is not null &&
+                profile.Capabilities != NativeCapability.None &&
+                !NativePatchTargetResolver.ValidateManagedTargets(
+                    out string targetError))
+            {
+                ChartExtMod.Log.Error(
+                    "[BuildProfile] managed patch target validation " +
+                    "disabled affected capabilities: " + targetError);
+            }
             if (profile.Abi is null &&
                 !string.IsNullOrWhiteSpace(
                     NativeAbiProfileStore.Error))

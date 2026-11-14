@@ -17,6 +17,8 @@ namespace InFalsusChartExt.CustomSong.Audio
     {
         private static readonly List<Pending> Waiting =
             new List<Pending>();
+        private static readonly List<DeferredRoute> Deferred =
+            new List<DeferredRoute>();
         private static readonly List<OwnedAudio> Owned =
             new List<OwnedAudio>();
         private static IntPtr _systemPointer;
@@ -32,6 +34,7 @@ namespace InFalsusChartExt.CustomSong.Audio
         internal static void Reset()
         {
             Waiting.Clear();
+            Deferred.Clear();
             _routes?.Clear();
             _ownedErrors = 0;
             _pauseErrors = 0;
@@ -50,8 +53,10 @@ namespace InFalsusChartExt.CustomSong.Audio
             if (_shutdownRequested)
                 return;
             ReleaseDisposedControllerAudio();
+            ReleaseSelectionOwnedIfGameplayActive();
             SynchronizeGameplayAudioPause();
             RegressionDiagnostics.AudioTick();
+            ResolveDeferred();
             for (int i = Waiting.Count - 1; i >= 0; i--)
             {
                 Pending pending = Waiting[i];
@@ -75,9 +80,22 @@ namespace InFalsusChartExt.CustomSong.Audio
         internal static void ReleaseOwnedForSceneUnload()
         {
             Waiting.Clear();
+            Deferred.Clear();
             _ownedErrors = 0;
             _pauseErrors = 0;
-            ReleaseAllOwned();
+            // A chart/scene cleanup can run while the song-select preview
+            // controller is still the active UI owner. Gameplay audio belongs
+            // to that chart and must be released; selection preview remains
+            // Mod-owned until the next selection, gameplay handoff, or full
+            // reset replaces/ends it.
+            for (int i = Owned.Count - 1; i >= 0; i--)
+            {
+                OwnedAudio owned = Owned[i];
+                if (owned.Selection)
+                    continue;
+                Owned.RemoveAt(i);
+                ReleaseOwned(owned);
+            }
             RegressionDiagnostics.Reset();
         }
 
@@ -107,11 +125,25 @@ namespace InFalsusChartExt.CustomSong.Audio
 #endif
                 _routes ??= new Stack<Route>();
                 if (!BuildProfile.Supports(
-                        NativeCapability.CustomSong) ||
-                    !CustomSongRuntime.TryGetSongForAudioName(
+                        NativeCapability.CustomSong))
+                {
+                    _routes.Push(new Route(
+                        null,
+                        __6,
+                        __0));
+                    return;
+                }
+                if (!CustomSongRuntime.TryGetSongForAudioName(
                         __0, out CustomSongPlan song))
                 {
-                    _routes.Push(null);
+                    // A non-custom factory request means the user moved to an
+                    // official preview or official gameplay. The selection
+                    // preview is Mod-owned and must not outlive that handoff.
+                    ReleaseSelectionOwned();
+                    _routes.Push(new Route(
+                        null,
+                        __6,
+                        __0));
                     return;
                 }
                 if (!string.IsNullOrWhiteSpace(
@@ -119,7 +151,7 @@ namespace InFalsusChartExt.CustomSong.Audio
                 {
                     __0 = song.TemplateAudioName;
                 }
-                _routes.Push(new Route(song, __6));
+                _routes.Push(new Route(song, __6, __0));
             }
 
             [HarmonyPostfix]
@@ -140,8 +172,23 @@ namespace InFalsusChartExt.CustomSong.Audio
                     _routes is not null && _routes.Count > 0
                         ? _routes.Pop()
                         : null;
-                if (route?.Song is null || __result is null)
+                if (route is null || __result is null)
                     return;
+                if (route.Song is null)
+                {
+                    if (route.Selection)
+                    {
+                        Deferred.Add(new DeferredRoute(
+                            __result,
+                            route.RequestedName));
+#if IFCE_DIAGNOSTICS
+                        ChartExtMod.Log.Msg(
+                            "[CustomSong] preview deferred " +
+                            $"name='{route.RequestedName}'");
+#endif
+                    }
+                    return;
+                }
 #if IFCE_DISABLE_CUSTOM_AUDIO
                 // Keep the Prefix template-name mapping, but skip the
                 // independent audio replacement in this diagnostic build.
@@ -158,6 +205,51 @@ namespace InFalsusChartExt.CustomSong.Audio
                 else
                     Waiting.Add(pending);
 #endif
+            }
+        }
+
+        private static void ResolveDeferred()
+        {
+            for (int i = Deferred.Count - 1; i >= 0; i--)
+            {
+                DeferredRoute deferred = Deferred[i];
+                if (deferred.Controller is null ||
+                    deferred.Controller.Pointer == IntPtr.Zero ||
+                    deferred.Deadline < DateTime.UtcNow)
+                {
+                    Deferred.RemoveAt(i);
+#if IFCE_DIAGNOSTICS
+                    ChartExtMod.Log.Msg(
+                        "[CustomSong] preview deferred expired " +
+                        $"name='{deferred.RequestedName}'");
+#endif
+                    continue;
+                }
+                if (!CustomSongRuntime.TryGetSongForAudioName(
+                        deferred.RequestedName,
+                        out CustomSongPlan song))
+                    continue;
+                Deferred.RemoveAt(i);
+#if IFCE_DIAGNOSTICS
+                ChartExtMod.Log.Msg(
+                    "[CustomSong] preview deferred resolved " +
+                    $"name='{deferred.RequestedName}' " +
+                    $"song='{song.Config.Id}'");
+#endif
+                var pending = new Pending(
+                    deferred.Controller,
+                    song,
+                    true);
+                if (TryGetNativeSound(
+                        deferred.Controller,
+                        out _) &&
+                    TryGetNativeChannel(
+                        deferred.Controller,
+                        out _) &&
+                    IsNativeAudioConfigured(deferred.Controller))
+                    TryReplace(pending);
+                else
+                    Waiting.Add(pending);
             }
         }
 
@@ -178,6 +270,7 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static void Replace(Pending pending)
         {
             _Cg controller = pending.Controller;
+            FmodExports.PrepareSoundLifecycle();
             if (!TryGetNativeSound(
                     controller, out IntPtr oldSoundHandle) ||
                 oldSoundHandle == IntPtr.Zero)
@@ -199,6 +292,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                 FmodExports.GetPaused(
                     oldChannelHandle, out pausedValue);
             bool wasPaused = pausedValue != 0;
+            if (pending.Selection)
+                wasPaused = false;
 
             IntPtr systemPointer = ResolveSystem(oldSoundHandle);
             if (systemPointer == IntPtr.Zero)
@@ -306,19 +401,51 @@ namespace InFalsusChartExt.CustomSong.Audio
                     replacementChannel,
                     pending,
                     wasPaused);
+#if IFCE_DIAGNOSTICS
+                if (pending.Selection)
+                {
+                    FmodExports.GetPaused(
+                        replacementChannel.handle,
+                        out int diagnosticPaused);
+                    FmodExports.GetPosition(
+                        replacementChannel.handle,
+                        out uint diagnosticPosition,
+                        (uint)TIMEUNIT.MS);
+                    ChartExtMod.Log.Msg(
+                        "[preview-audio] " +
+                        $"pausedIn={pausedValue} " +
+                        $"pausedNow={diagnosticPaused} " +
+                        $"positionMs={diagnosticPosition}");
+                }
+#endif
 
                 if (oldChannelHandle != IntPtr.Zero &&
                     !ShouldDeferNativeRelease())
                     FmodExports.Stop(oldChannelHandle);
-                Marshal.WriteIntPtr(
-                    soundPointer, replacement.handle);
-                Marshal.WriteIntPtr(
-                    channelPointer, replacementChannel.handle);
-                TrackOwned(
-                    controller,
-                    replacement.handle,
-                    replacementChannel.handle,
-                    pending.Selection);
+                if (pending.Selection)
+                {
+                    // The first song-select controller may be disposed almost
+                    // immediately after the factory callback. Keep selection
+                    // audio in Mod-owned lifecycle instead of publishing its
+                    // handles into that short-lived controller.
+                    TrackSelectionOwned(
+                        replacement.handle,
+                        replacementChannel.handle,
+                        controller.Pointer);
+                }
+                else
+                {
+                    ReleaseSelectionOwned();
+                    Marshal.WriteIntPtr(
+                        soundPointer, replacement.handle);
+                    Marshal.WriteIntPtr(
+                        channelPointer, replacementChannel.handle);
+                    TrackOwned(
+                        controller,
+                        replacement.handle,
+                        replacementChannel.handle,
+                        false);
+                }
                 RegressionDiagnostics.AudioOwned(
                     "replace",
                     pending.Selection,
@@ -539,6 +666,76 @@ namespace InFalsusChartExt.CustomSong.Audio
                 ReleaseOwned(replaced);
         }
 
+        private static void TrackSelectionOwned(
+            IntPtr sound,
+            IntPtr channel,
+            IntPtr controllerPointer)
+        {
+            ReleaseSelectionOwned();
+            Owned.Add(new OwnedAudio
+            {
+                Controller = new WeakReference<_Cg>(null),
+                ControllerPointer = controllerPointer,
+                Sound = sound,
+                Channel = channel,
+                Selection = true,
+            });
+        }
+
+        private static void ReleaseSelectionOwned()
+        {
+            for (int i = Owned.Count - 1; i >= 0; i--)
+            {
+                OwnedAudio owned = Owned[i];
+                if (!owned.Selection)
+                    continue;
+                Owned.RemoveAt(i);
+                ReleaseOwned(owned);
+            }
+        }
+
+        private static void ReleaseSelectionOwnedIfGameplayActive()
+        {
+            bool hasSelection = false;
+            for (int i = 0; i < Owned.Count; i++)
+            {
+                if (!Owned[i].Selection)
+                    continue;
+                hasSelection = true;
+                break;
+            }
+            if (!hasSelection)
+                return;
+
+            bool gameplay = false;
+            try
+            {
+                Il2Cppifapp.Game.Scenes.GameScene scene =
+                    Il2Cppifapp.Game.Scenes.GameScene._xn;
+                gameplay =
+                    scene != null &&
+                    scene.Pointer != IntPtr.Zero &&
+                    scene.gameObject != null &&
+                    scene.gameObject.activeInHierarchy;
+                if (!gameplay)
+                {
+                    Il2Cppifapp.Game.Scenes.Game.Track track =
+                        Il2Cppifapp.Game.Scenes.Game.Track._a;
+                    gameplay =
+                        track != null &&
+                        track.Pointer != IntPtr.Zero &&
+                        track.gameObject != null &&
+                        track.gameObject.activeInHierarchy;
+                }
+            }
+            catch
+            {
+                return;
+            }
+            if (gameplay)
+                ReleaseSelectionOwned();
+        }
+
         private static void ReleaseDisposedControllerAudio()
         {
             for (int i = Owned.Count - 1; i >= 0; i--)
@@ -546,6 +743,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                 try
                 {
                     OwnedAudio owned = Owned[i];
+                    if (owned.Selection)
+                        continue;
                     if (owned.Controller is null ||
                         !owned.Controller.TryGetTarget(
                             out _Cg controller) ||
@@ -714,14 +913,17 @@ namespace InFalsusChartExt.CustomSong.Audio
         {
             internal Route(
                 CustomSongPlan song,
-                bool selection)
+                bool selection,
+                string requestedName)
             {
                 Song = song;
                 Selection = selection;
+                RequestedName = requestedName ?? string.Empty;
             }
 
             internal CustomSongPlan Song { get; }
             internal bool Selection { get; }
+            internal string RequestedName { get; }
         }
 
 #if IFCE_DIAGNOSTICS
@@ -756,6 +958,22 @@ namespace InFalsusChartExt.CustomSong.Audio
             internal _Cg Controller { get; }
             internal CustomSongPlan Song { get; }
             internal bool Selection { get; }
+            internal DateTime Deadline { get; }
+        }
+
+        private sealed class DeferredRoute
+        {
+            internal DeferredRoute(
+                _Cg controller,
+                string requestedName)
+            {
+                Controller = controller;
+                RequestedName = requestedName ?? string.Empty;
+                Deadline = DateTime.UtcNow.AddSeconds(10);
+            }
+
+            internal _Cg Controller { get; }
+            internal string RequestedName { get; }
             internal DateTime Deadline { get; }
         }
 

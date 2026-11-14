@@ -179,23 +179,17 @@ namespace InFalsusChartExt
                 if (member.GlowSerial <= ownerSerial)
                     continue;
 
-                double visualNow =
-                    TimingGroupRuntime.VisualTimeMs(
-                        member.TimingGroup, now);
-                double visualStart =
-                    TimingGroupRuntime.VisualTimeMs(
-                        member.TimingGroup, member.StartMs);
-                double visualEnd =
-                    TimingGroupRuntime.VisualTimeMs(
-                        member.TimingGroup, member.EndMs);
-                if (!IsFinite(visualNow) ||
-                    !IsFinite(visualStart) ||
-                    !IsFinite(visualEnd) ||
-                    visualEnd <= visualStart)
+                if (!SkyBlockVisualRuntime.TryGetVisualTiming(
+                        member, now,
+                        out double visualNow,
+                        out double visualStart,
+                        out double visualEnd))
                     continue;
-                double progress =
-                    (visualNow - visualStart) /
-                    (visualEnd - visualStart);
+                double progress = member.TimingGroup == 0
+                    ? SkyBlockVisualRuntime.RawProgress(
+                        member, now)
+                    : (visualNow - visualStart) /
+                      (visualEnd - visualStart);
                 if (!(progress > 0.0 && progress < 1.0))
                     continue;
 

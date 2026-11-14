@@ -27,6 +27,9 @@ namespace InFalsusChartExt
         private static int _judgmentOffset = -1;
         private static int _finalOffset = -1;
         private static int _relTimeOffset = -1;
+        private static int _absTimeOffset = -1;
+        private static int _recordTypeOffset = -1;
+        private static int _recordStateOffset = -1;
 
         internal static bool ResolveRecordLayout()
         {
@@ -44,9 +47,18 @@ namespace InFalsusChartExt
                 FieldOffset(klass, "_Wdb") - NativeLayoutCatalog.BoxedValueHeader;
             _relTimeOffset =
                 FieldOffset(klass, "_udb") - NativeLayoutCatalog.BoxedValueHeader;
+            _absTimeOffset =
+                FieldOffset(klass, "_Udb") - NativeLayoutCatalog.BoxedValueHeader;
+            _recordTypeOffset =
+                FieldOffset(klass, "_vdb") - NativeLayoutCatalog.BoxedValueHeader;
+            _recordStateOffset =
+                FieldOffset(klass, "_Vdb") - NativeLayoutCatalog.BoxedValueHeader;
             if (_judgmentOffset != JudgmentByte ||
                 _finalOffset != FinalByte ||
-                _relTimeOffset != NativeLayoutCatalog.Record.RelativeTime)
+                _relTimeOffset != NativeLayoutCatalog.Record.RelativeTime ||
+                _absTimeOffset < 0 ||
+                _recordTypeOffset < 0 ||
+                _recordStateOffset < 0)
                 return false;
             _cHClass = klass;
             BuildProfile.MarkCoreAbiValidated();
@@ -55,6 +67,9 @@ namespace InFalsusChartExt
 
         internal static int JudgmentOffset => _judgmentOffset;
         internal static int FinalOffset => _finalOffset;
+        internal static int AbsoluteTimeOffset => _absTimeOffset;
+        internal static int RecordTypeOffset => _recordTypeOffset;
+        internal static int RecordStateOffset => _recordStateOffset;
 
         internal static int FieldOffset(IntPtr klass, string name)
         {

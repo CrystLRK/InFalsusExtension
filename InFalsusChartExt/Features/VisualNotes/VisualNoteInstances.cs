@@ -249,6 +249,28 @@ namespace InFalsusChartExt
 
         private Il2Cppifapp.Game.Scenes.Game.HoldNoteV2 _hold;
         private Vector3 _baseScale;
+        private MeshRenderer _frontRenderer;
+        private MeshRenderer _middleRenderer;
+        private MeshRenderer _backRenderer;
+        private static readonly int NonHeldMapProperty =
+            Shader.PropertyToID("_NonHeldMap");
+        private static readonly int HeldMapProperty =
+            Shader.PropertyToID("_HeldMap");
+        private static readonly int HeldBoostedMapProperty =
+            Shader.PropertyToID("_HeldBoostedMap");
+#if IFCE_DIAGNOSTICS
+        private float _r7LastLoggedProgress = -1f;
+        private int _r7HoldLogs;
+        private float _r7LastGeometryProgress = -1f;
+        private int _r7GeometryLogs;
+        private static bool _r7HoldScanLogged;
+        private static readonly int HeldStateProperty =
+            Shader.PropertyToID("_Held");
+        private static readonly int ProgressProperty =
+            Shader.PropertyToID("_Progress");
+        private static readonly int ModulateProgressProperty =
+            Shader.PropertyToID("_ModulateProgress");
+#endif
 
         internal VisualHoldNoteInstance(
             VisualNoteDescriptor descriptor,
@@ -281,7 +303,23 @@ namespace InFalsusChartExt
                 if (_hold == null || _hold.Pointer == IntPtr.Zero)
                     throw new InvalidOperationException(
                         "native hold component is unavailable");
+#if IFCE_DIAGNOSTICS
+                ChartExtMod.Log.Msg(
+                    "[r7-hold] create " +
+                    $"id={descriptor.SourceId} " +
+                    $"group={descriptor.TimingGroup} " +
+                    $"lifetime={descriptor.Lifetime} " +
+                    $"start={descriptor.StartMs} " +
+                    $"end={descriptor.EndMs}");
+#endif
+                _frontRenderer = _hold.frontMeshRenderer;
+                _middleRenderer = _hold.middleMeshRenderer;
+                _backRenderer = _hold.backMeshRenderer;
                 ApplyHoldGuideSetting(GameObject, root, _hold);
+                PrepareNoInputAppearance();
+#if IFCE_DIAGNOSTICS
+                LogHoldSceneInstances();
+#endif
                 GameObject.SetActive(false);
             }
             catch
@@ -297,6 +335,8 @@ namespace InFalsusChartExt
                 return;
             double startLead = frame.Lead(
                 Descriptor.TimingGroup, Descriptor.StartMs);
+            double endLead = frame.Lead(
+                Descriptor.TimingGroup, Descriptor.EndMs);
             int lane = VisualNoteObjectUtil.Lane(Descriptor);
             int width = VisualNoteObjectUtil.Width(Descriptor);
             Transform root = GameObject.transform;
@@ -334,18 +374,192 @@ namespace InFalsusChartExt
                 return;
             }
 
+            float progress = 0f;
+            if (Descriptor.Lifetime != VisualNoteLifetime.NoClip &&
+                startLead <= 0.0)
+            {
+                double span = endLead - startLead;
+                progress = span > 1e-6
+                    ? (float)Math.Max(
+                        0.0,
+                        Math.Min(1.0, -startLead / span))
+                    : 1f;
+            }
+
+            bool noInputHold =
+                Descriptor.Lifetime == VisualNoteLifetime.NoInput;
+            double holdSpanMs = noInputHold
+                ? endLead - startLead
+                : (Descriptor.EndMs - Descriptor.StartMs);
+            // The native Hold mesh is trimmed from the head by `progress`.
+            // Use the visual span so the cut plane follows the judgement
+            // line under global/group speed changes. The independent Hold
+            // never uses the native "held" material state.
             _hold._cZ(
                 (float)Math.Abs(
                     frame.Scale *
-                    (Descriptor.EndMs - Descriptor.StartMs)),
+                    holdSpanMs),
                 (float)frame.DepthFactor,
-                0f,
+                progress,
                 false,
                 width,
-                false,
+                noInputHold,
                 frame.NowMs);
+#if IFCE_DIAGNOSTICS
+            LogHoldGeometry(progress);
+#endif
+#if IFCE_DIAGNOSTICS
+            if (Descriptor.Lifetime == VisualNoteLifetime.NoInput &&
+                _r7HoldLogs < 40 &&
+                (_r7LastLoggedProgress < 0f ||
+                 Math.Abs(progress - _r7LastLoggedProgress) >= 0.1f ||
+                 endLead <= 200.0))
+            {
+                _r7LastLoggedProgress = progress;
+                _r7HoldLogs++;
+                ChartExtMod.Log.Msg(
+                    "[r7-hold] update " +
+                    $"id={Descriptor.SourceId} " +
+                    $"group={Descriptor.TimingGroup} " +
+                    $"now={frame.NowMs:F1} " +
+                    $"startLead={startLead:F1} " +
+                    $"endLead={endLead:F1} " +
+                    $"progress={progress:F3} " +
+                    $"active={GameObject.activeSelf}");
+            }
+#endif
             if (!GameObject.activeSelf)
                 GameObject.SetActive(true);
+        }
+
+#if IFCE_DIAGNOSTICS
+        private void LogHoldGeometry(float progress)
+        {
+            if (Descriptor.Lifetime != VisualNoteLifetime.NoInput ||
+                _r7GeometryLogs >= 24 ||
+                (Math.Abs(progress - _r7LastGeometryProgress) < 0.2f &&
+                 progress < 0.99f))
+                return;
+            _r7LastGeometryProgress = progress;
+            _r7GeometryLogs++;
+            Transform front = _hold.frontTransform;
+            Transform middle = _hold.middleTransform;
+            Transform back = _hold.backTransform;
+            ChartExtMod.Log.Msg(
+                "[r7-hold-geo] " +
+                $"progress={progress:F3} " +
+                $"frontPos={FormatVector(front?.localPosition)} " +
+                $"frontScale={FormatVector(front?.localScale)} " +
+                $"middlePos={FormatVector(middle?.localPosition)} " +
+                $"middleScale={FormatVector(middle?.localScale)} " +
+                $"backPos={FormatVector(back?.localPosition)} " +
+                $"backScale={FormatVector(back?.localScale)} " +
+                $"frontMat={FormatMaterial(_frontRenderer)} " +
+                $"middleMat={FormatMaterial(_middleRenderer)} " +
+                $"backMat={FormatMaterial(_backRenderer)}");
+        }
+
+        private static string FormatVector(Vector3? value)
+        {
+            if (!value.HasValue)
+                return "null";
+            Vector3 v = value.Value;
+            return $"{v.x:F3},{v.y:F3},{v.z:F3}";
+        }
+
+        private static string FormatMaterial(MeshRenderer renderer)
+        {
+            Material material = renderer?.sharedMaterial;
+            if (material == null || material.Pointer == IntPtr.Zero)
+                return "null";
+            return "h=" + FormatFloat(material, HeldStateProperty) +
+                   ",p=" + FormatFloat(material, ProgressProperty) +
+                   ",m=" + FormatFloat(material, ModulateProgressProperty) +
+                   ",heldTex=" + FormatTexture(
+                       material, HeldMapProperty) +
+                   ",nonHeldTex=" + FormatTexture(
+                       material, NonHeldMapProperty);
+        }
+
+        private static string FormatFloat(Material material, int property)
+        {
+            return material.HasProperty(property)
+                ? material.GetFloat(property).ToString("F3")
+                : "na";
+        }
+
+        private static string FormatTexture(Material material, int property)
+        {
+            if (!material.HasProperty(property))
+                return "na";
+            Texture texture = material.GetTexture(property);
+            return texture == null || texture.Pointer == IntPtr.Zero
+                ? "null"
+                : texture.name;
+        }
+
+        private void LogHoldSceneInstances()
+        {
+            if (Descriptor.Lifetime != VisualNoteLifetime.NoInput ||
+                _r7HoldScanLogged)
+                return;
+            _r7HoldScanLogged = true;
+            try
+            {
+                Il2Cppifapp.Game.Scenes.Game.HoldNoteV2[] holds =
+                    UnityEngine.Object.FindObjectsOfType<
+                        Il2Cppifapp.Game.Scenes.Game.HoldNoteV2>(true);
+                ChartExtMod.Log.Msg(
+                    $"[r7-hold-scan] count={holds?.Length ?? 0}");
+                for (int i = 0;
+                     holds != null && i < holds.Length && i < 32;
+                     i++)
+                {
+                    Il2Cppifapp.Game.Scenes.Game.HoldNoteV2 hold =
+                        holds[i];
+                    if (hold == null || hold.Pointer == IntPtr.Zero)
+                        continue;
+                    GameObject go = hold.gameObject;
+                    ChartExtMod.Log.Msg(
+                        "[r7-hold-scan] " +
+                        $"name='{go?.name}' " +
+                        $"ptr=0x{hold.Pointer.ToInt64():X} " +
+                        $"active={go?.activeInHierarchy} " +
+                        $"pos={FormatVector(
+                            go?.transform?.position)}");
+                }
+            }
+            catch (Exception e)
+            {
+                ChartExtMod.Log.Warning(
+                    "[r7-hold-scan] failed: " + e.Message);
+            }
+        }
+
+#endif
+
+        private void PrepareNoInputAppearance()
+        {
+            if (Descriptor.Lifetime != VisualNoteLifetime.NoInput)
+                return;
+            CopyNonHeldMaps(_frontRenderer);
+            CopyNonHeldMaps(_middleRenderer);
+            CopyNonHeldMaps(_backRenderer);
+        }
+
+        private static void CopyNonHeldMaps(MeshRenderer renderer)
+        {
+            Material material = renderer?.sharedMaterial;
+            if (material == null || material.Pointer == IntPtr.Zero)
+                return;
+            Texture nonHeld = material.GetTexture(NonHeldMapProperty);
+            if (nonHeld == null || nonHeld.Pointer == IntPtr.Zero)
+                return;
+            if (material.HasProperty(HeldMapProperty))
+                material.SetTexture(HeldMapProperty, nonHeld);
+            if (material.HasProperty(HeldBoostedMapProperty))
+                material.SetTexture(
+                    HeldBoostedMapProperty, nonHeld);
         }
 
         private static void ApplyHoldGuideSetting(

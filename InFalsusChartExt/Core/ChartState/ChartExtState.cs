@@ -237,7 +237,6 @@ namespace InFalsusChartExt
             if (snapshot == null || snapshot.Committed)
                 return;
             snapshot.Committed = true;
-            ChartRuntimeLifecycle.Dispose();
             PopTransform(snapshot);
         }
 

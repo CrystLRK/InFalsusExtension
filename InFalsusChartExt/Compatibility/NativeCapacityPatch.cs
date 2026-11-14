@@ -88,6 +88,15 @@ namespace InFalsusChartExt
             uint newProtection,
             out uint oldProtection);
 
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FlushInstructionCache(
+            IntPtr process,
+            IntPtr address,
+            UIntPtr size);
+
         /// <summary>Run once from OnInitializeMelon, before chart data allocation.</summary>
         internal static void Apply()
         {
@@ -439,7 +448,42 @@ namespace InFalsusChartExt
                 }
                 Marshal.WriteInt32(
                     immediate, target.Site.NewValue);
-                VirtualProtect(immediate, new UIntPtr(4), oldProtect, out _);
+                bool flushed = FlushInstructionCache(
+                    GetCurrentProcess(), immediate, new UIntPtr(4));
+                bool restored = VirtualProtect(
+                    immediate, new UIntPtr(4), oldProtect, out _);
+                if (!flushed || !restored)
+                {
+                    try
+                    {
+                        if (VirtualProtect(
+                                immediate,
+                                new UIntPtr(4),
+                                PageExecuteReadWrite,
+                                out uint retryProtection))
+                        {
+                            Marshal.WriteInt32(
+                                immediate,
+                                target.Site.OldValue);
+                            FlushInstructionCache(
+                                GetCurrentProcess(),
+                                immediate,
+                                new UIntPtr(4));
+                            VirtualProtect(
+                                immediate,
+                                new UIntPtr(4),
+                                retryProtection,
+                                out _);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    Warn(
+                        $"{target.Site.Name}: flush={flushed}, " +
+                        $"protectionRestore={restored}");
+                    return false;
+                }
                 return true;
             }
             catch (Exception e)
@@ -479,11 +523,20 @@ namespace InFalsusChartExt
                         continue;
                     Marshal.WriteInt32(
                         immediate, target.Site.OldValue);
-                    VirtualProtect(
+                    FlushInstructionCache(
+                        GetCurrentProcess(),
+                        immediate,
+                        new UIntPtr(4));
+                    if (!VirtualProtect(
                         immediate,
                         new UIntPtr(4),
                         oldProtect,
-                        out _);
+                        out _))
+                    {
+                        Warn(
+                            $"{target.Site.Name}: rollback " +
+                            "protection restore failed");
+                    }
                 }
                 catch { }
             }

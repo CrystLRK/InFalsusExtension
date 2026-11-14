@@ -24,6 +24,7 @@ namespace InFalsusChartExt
 
         internal static Texture Ensure(string path)
         {
+            bool createdResources = false;
             try
             {
                 if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
@@ -31,6 +32,7 @@ namespace InFalsusChartExt
                 if (_object == null)
                 {
                     _object = new GameObject("IFCE_BackgroundVideo");
+                    createdResources = true;
                     UnityEngine.Object.DontDestroyOnLoad(_object);
                     _player = _object.AddComponent<VideoPlayer>();
                     _texture = new RenderTexture(1920, 1080, 0, RenderTextureFormat.ARGB32)
@@ -66,6 +68,14 @@ namespace InFalsusChartExt
             }
             catch (Exception e)
             {
+                if (createdResources)
+                {
+                    Dispose();
+                }
+                else
+                {
+                    Stop();
+                }
                 if (_errors++ < 10)
                     ChartExtMod.Log.Error("[ChartExt] background video failed: " + e);
                 return null;

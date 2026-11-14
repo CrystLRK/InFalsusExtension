@@ -93,6 +93,48 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static ChannelStop _stop;
         private static SoundRelease _release;
 
+        /// <summary>
+        /// Resolves every export used after a replacement Sound is created.
+        /// The replacement transaction calls this before createSound so a
+        /// missing release/control export cannot leave a half-owned Sound.
+        /// </summary>
+        internal static void PrepareSoundLifecycle()
+        {
+            _getSystem ??= Resolve<SoundGetSystem>(
+                "FMOD5_Sound_GetSystemObject",
+                "FMOD_Sound_GetSystemObject");
+            _getGroup ??= Resolve<ChannelGetGroup>(
+                "FMOD5_Channel_GetChannelGroup",
+                "FMOD_Channel_GetChannelGroup");
+            _playSound ??= Resolve<PlaySound>(
+                "FMOD5_System_PlaySound",
+                "FMOD_System_PlaySound");
+            _setMode ??= Resolve<ChannelSetMode>(
+                "FMOD5_Channel_SetMode",
+                "FMOD_Channel_SetMode");
+            _setLoopCount ??= Resolve<ChannelSetLoopCount>(
+                "FMOD5_Channel_SetLoopCount",
+                "FMOD_Channel_SetLoopCount");
+            _setLoopPoints ??= Resolve<ChannelSetLoopPoints>(
+                "FMOD5_Channel_SetLoopPoints",
+                "FMOD_Channel_SetLoopPoints");
+            _setPosition ??= Resolve<ChannelSetPosition>(
+                "FMOD5_Channel_SetPosition",
+                "FMOD_Channel_SetPosition");
+            _setPaused ??= Resolve<ChannelSetPaused>(
+                "FMOD5_Channel_SetPaused",
+                "FMOD_Channel_SetPaused");
+            _getPaused ??= Resolve<ChannelGetPaused>(
+                "FMOD5_Channel_GetPaused",
+                "FMOD_Channel_GetPaused");
+            _stop ??= Resolve<ChannelStop>(
+                "FMOD5_Channel_Stop",
+                "FMOD_Channel_Stop");
+            _release ??= Resolve<SoundRelease>(
+                "FMOD5_Sound_Release",
+                "FMOD_Sound_Release");
+        }
+
         internal static int GetSystem(IntPtr sound, out IntPtr system) =>
             (_getSystem ??= Resolve<SoundGetSystem>(
                 "FMOD5_Sound_GetSystemObject",

@@ -61,6 +61,14 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
                 return true;
             foreach (CustomSongPlan candidate in _byBaseName.Values)
             {
+                if (string.Equals(
+                        stem,
+                        candidate.Config.Id,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    song = candidate;
+                    return true;
+                }
                 if (stem.IndexOf(
                         candidate.BaseName,
                         StringComparison.OrdinalIgnoreCase) >= 0)

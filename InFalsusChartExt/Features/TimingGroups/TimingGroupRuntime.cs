@@ -35,6 +35,15 @@ namespace InFalsusChartExt
         private static int _curveGeneration = -1;
         private static int _curveGlobalEvents = -1;
         private static int _curveGroupEvents = -1;
+        private static int _visualTableCompileGeneration = -1;
+        private static IntPtr _visualTableBase = IntPtr.Zero;
+        private static int _visualTableLength;
+        private static bool _visualTableReady;
+#if IFCE_DIAGNOSTICS
+        private static readonly Dictionary<long, bool> WindowDiagnostic =
+            new Dictionary<long, bool>();
+        private static int _windowDiagnosticLogs;
+#endif
 
         private sealed class WarpSession
         {
@@ -216,18 +225,31 @@ namespace InFalsusChartExt
                     double wgNow = WGroup(slot.Group, nowMs);
                     double wgBe = WGroup(slot.Group, be);
                     double visualRel = wgBe - wgNow;
-                    // Native flick rendering can be ahead of the real spawn window
-                    // because its group timeline may be much slower. Keep its `_IA`
-                    // entry available while it is in the visual window; other types
-                    // retain the original real-time gate.
-                    if (slot.Type == 2 || slot.Type == 4 || slot.Type == 5)
+                    bool inVisualWindow =
+                        visualRel <= 3000.0 && visualRel >= -3000.0;
+#if IFCE_DIAGNOSTICS
+                    long diagnosticKey =
+                        ((long)(uint)slot.Side << 32) |
+                        (uint)slot.Position;
+                    if (slot.Group != 0 &&
+                        _windowDiagnosticLogs < 24 &&
+                        (!WindowDiagnostic.TryGetValue(
+                             diagnosticKey,
+                             out bool previousWindow) ||
+                         previousWindow != inVisualWindow))
                     {
-                        if (visualRel > 3000.0 || visualRel < -3000.0) continue;
+                        _windowDiagnosticLogs++;
+                        ChartExtMod.Log.Msg(
+                            "[timing-window] " +
+                            $"group={slot.Group} type={slot.Type} " +
+                            $"side={slot.Side} pos={slot.Position} " +
+                            $"start={be} now={nowMs:F1} " +
+                            $"realRel={rel:F1} visualRel={visualRel:F1} " +
+                            $"included={inVisualWindow}");
                     }
-                    else if (rel > 3000.0 || rel < -3000.0)
-                    {
-                        continue;
-                    }
+                    WindowDiagnostic[diagnosticKey] = inVisualWindow;
+#endif
+                    if (!inVisualWindow) continue;
                     int end = Marshal.ReadInt32(
                         note + NativeLayoutCatalog.Note.EndMs);
 
@@ -465,6 +487,7 @@ namespace InFalsusChartExt
             Restore();
             ChartExtState.CompileGeneration++;
             _lastFrame = -1;
+            ResetVisualTableCache();
         }
 
         /// <summary>
@@ -479,6 +502,11 @@ namespace InFalsusChartExt
             _lastFrame = -1;
             _visualClockPaused = false;
             _visualClockHoldMs = 0.0;
+            ResetVisualTableCache();
+#if IFCE_DIAGNOSTICS
+            WindowDiagnostic.Clear();
+            _windowDiagnosticLogs = 0;
+#endif
         }
 
         /// <summary>
@@ -786,7 +814,11 @@ namespace InFalsusChartExt
             Il2Cpp_E._VD judge = Il2Cppifapp.Game.Scenes.GameScene._DN;
             if (judge == null || judge.Pointer == IntPtr.Zero) return double.NaN;
             double raw = judge._c * 1000.0;
-            if ((byte)Il2Cpp_E._VD._a != 2)
+            bool gameplay = (byte)Il2Cpp_E._VD._a == 2;
+            bool pauseLayerActive = IsPauseLayerActive();
+            if (ShouldHoldVisualClock(
+                    gameplay,
+                    pauseLayerActive))
             {
                 if (!_visualClockPaused)
                 {
@@ -797,6 +829,18 @@ namespace InFalsusChartExt
             }
             _visualClockPaused = false;
             return raw;
+        }
+
+        /// <summary>
+        /// Freeze every timing-group consumer until both gameplay has resumed
+        /// and the pause layer has closed. Holding only on the gameplay state
+        /// lets native and independent visuals advance during the resume fade.
+        /// </summary>
+        internal static bool ShouldHoldVisualClock(
+            bool gameplay,
+            bool pauseLayerActive)
+        {
+            return !gameplay || pauseLayerActive;
         }
 
         internal static double CurrentMs() => NowMs();
@@ -864,6 +908,164 @@ namespace InFalsusChartExt
         internal static double VisualTimeMs(int group, double t)
         {
             return group > 0 ? WGroup(group, t) : WGlobal(t);
+        }
+
+        /// <summary>
+        /// Projects a timing-group visual interval into the native global-time
+        /// coordinates used by Track.Update. This is the same transformation
+        /// as ApplyWarp(), but performed without mutating native note fields.
+        /// It prevents a group speed near 1.0 from being multiplied by the
+        /// global track speed a second time.
+        /// </summary>
+        internal static bool TryGetNativeVisualTiming(
+            int group,
+            double nowMs,
+            double startMs,
+            double endMs,
+            out double visualNow,
+            out double visualStart,
+            out double visualEnd)
+        {
+            if (group == 0)
+            {
+                visualNow = nowMs;
+                visualStart = startMs;
+                visualEnd = endMs;
+            }
+            else
+            {
+                EnsureCurves();
+                double groupNow = WGroup(group, nowMs);
+                double globalNow = WGlobal(nowMs);
+                double startLead = WGroup(group, startMs) - groupNow;
+                double endLead = WGroup(group, endMs) - groupNow;
+                visualNow = nowMs;
+                visualStart = InvGlobal(
+                    globalNow + startLead, nowMs);
+                visualEnd = InvGlobal(
+                    globalNow + endLead, nowMs);
+                if (endMs > startMs &&
+                    visualEnd <= visualStart)
+                    visualEnd = visualStart + 1.0;
+            }
+            return IsFinite(visualNow) &&
+                   IsFinite(visualStart) &&
+                   IsFinite(visualEnd) &&
+                   visualEnd > visualStart;
+        }
+
+        /// <summary>
+        /// Reads the compiled per-note render times consumed by Track.Update.
+        /// The values are integrated scroll-time seconds and are the coordinate
+        /// source used by native Flick placement. They must not be treated as
+        /// raw authored milliseconds. The Mod's visual transform consumes this
+        /// scroll-time coordinate directly. They must not be replaced with _Ee,
+        /// which is an asynchronously populated cache.
+        /// </summary>
+        internal static bool TryGetCompiledVisualTimes(
+            long id,
+            double expectedStartMs,
+            double expectedEndMs,
+            out double startMs,
+            out double endMs)
+        {
+            startMs = 0.0;
+            endMs = 0.0;
+            if (id < 0 || !EnsureCompiledVisualTable())
+                return false;
+            try
+            {
+                if (id >= _visualTableLength)
+                    return false;
+                IntPtr entry = new IntPtr(
+                    _visualTableBase.ToInt64() +
+                    id * NativeLayoutCatalog.Compiled.WarpEntryStride);
+                startMs = BitConverter.Int64BitsToDouble(
+                    Marshal.ReadInt64(entry)) * 1000.0;
+                endMs = BitConverter.Int64BitsToDouble(
+                    Marshal.ReadInt64(new IntPtr(
+                        entry.ToInt64() +
+                        NativeLayoutCatalog.Compiled.WarpEntryEnd))) *
+                    1000.0;
+                if (!IsFinite(startMs) ||
+                    !IsFinite(endMs) ||
+                    endMs < startMs)
+                    return false;
+                bool startUninitialized =
+                    Math.Abs(startMs) <= 1e-6 &&
+                    expectedStartMs > 1000.0;
+                bool endUninitialized =
+                    Math.Abs(endMs) <= 1e-6 &&
+                    expectedEndMs > 1000.0;
+                // Scroll time can legitimately differ from authored time by
+                // much more than two minutes on long charts with sustained
+                // speed changes. Keep the uninitialized guard, but scale the
+                // sanity bound with the chart position.
+                double allowed = Math.Max(
+                    120000.0,
+                    Math.Max(
+                        Math.Abs(expectedStartMs),
+                        Math.Abs(expectedEndMs)) +
+                    60000.0);
+                return !startUninitialized &&
+                       !endUninitialized &&
+                       Math.Abs(startMs - expectedStartMs) <= allowed &&
+                       Math.Abs(endMs - expectedEndMs) <= allowed;
+            }
+            catch
+            {
+                startMs = 0.0;
+                endMs = 0.0;
+                return false;
+            }
+        }
+
+        private static bool EnsureCompiledVisualTable()
+        {
+            int generation = ChartExtState.CompileGeneration;
+            if (_visualTableCompileGeneration == generation)
+                return _visualTableReady;
+            _visualTableCompileGeneration = generation;
+            _visualTableBase = IntPtr.Zero;
+            _visualTableLength = 0;
+            _visualTableReady = false;
+            if (!TryGetCompiledOwner(out IntPtr owner))
+                return false;
+            try
+            {
+                Il2Cppifapp.Game.LogicalNotePlayer player =
+                    Il2Cppifapp.Game.LogicalNotePlayer._Qe;
+                Il2Cpp_b._T compiled = player?._ve;
+                if (compiled == null ||
+                    compiled.Pointer != owner ||
+                    !TryResolveWarpTable(
+                        compiled,
+                        out _visualTableBase,
+                        out _visualTableLength))
+                    return false;
+                _visualTableReady = true;
+                return true;
+            }
+            catch
+            {
+                _visualTableBase = IntPtr.Zero;
+                _visualTableLength = 0;
+                return false;
+            }
+        }
+
+        private static void ResetVisualTableCache()
+        {
+            _visualTableCompileGeneration = -1;
+            _visualTableBase = IntPtr.Zero;
+            _visualTableLength = 0;
+            _visualTableReady = false;
+        }
+
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) &&
+                   !double.IsInfinity(value);
         }
 
         private static void EnsureCurves()

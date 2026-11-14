@@ -82,6 +82,8 @@ namespace InFalsusChartExt
         private static Transform _screenShadowTransform;
         private static Texture2D _screenShadowTexture;
         private static IntPtr _screenShadowCamera;
+        private static Camera _screenShadowCameraView;
+        private static int _nextCameraSearchFrame;
         private static int _screenShadowErrors;
         internal static void ResetForChartSwitch()
         {
@@ -146,6 +148,8 @@ namespace InFalsusChartExt
             _screenShadowMesh = null;
             _screenShadowTexture = null;
             _screenShadowCamera = IntPtr.Zero;
+            _screenShadowCameraView = null;
+            _nextCameraSearchFrame = 0;
         }
 
         /// <summary>Called before `_hb` builds either the spawn or judge list.</summary>
@@ -671,9 +675,10 @@ namespace InFalsusChartExt
             long ptr = source.Pointer.ToInt64();
             if (FadeMaterialBySource.TryGetValue(ptr, out Material cached))
                 return cached;
+            Material material = null;
             try
             {
-                var material = new Material(source)
+                material = new Material(source)
                 {
                     name = "IFCE_TrackFade_" + source.name,
                 };
@@ -691,11 +696,30 @@ namespace InFalsusChartExt
                     material.SetFloat(Shader.PropertyToID("_ZWrite"), 0f);
                 material.renderQueue = 3000;
                 FadeMaterialBySource[ptr] = material;
-                FadeMaterialPointers.Add(material.Pointer.ToInt64());
-                return material;
+                try
+                {
+                    FadeMaterialPointers.Add(material.Pointer.ToInt64());
+                    Material result = material;
+                    material = null;
+                    return result;
+                }
+                catch
+                {
+                    FadeMaterialBySource.Remove(ptr);
+                    throw;
+                }
             }
             catch (Exception e)
             {
+                try
+                {
+                    if (material != null &&
+                        material.Pointer != IntPtr.Zero)
+                        UnityEngine.Object.Destroy(material);
+                }
+                catch
+                {
+                }
                 if (_errors++ < 20)
                     ChartExtMod.Log.Error("[ChartExt] trackdisplay material clone failed: " + e);
                 return null;
@@ -771,12 +795,7 @@ namespace InFalsusChartExt
         {
             try
             {
-                Camera camera = Camera.main;
-                if (camera != null &&
-                    (camera.orthographic || (camera.cullingMask & (1 << 7)) == 0))
-                    camera = null;
-                if (camera == null)
-                    camera = FindGameplayCamera();
+                Camera camera = ResolveGameplayCamera();
                 if (camera == null) return;
                 float depth = ComputeTrackFarDepth(camera) + 0.75f;
                 depth = Mathf.Clamp(depth,
@@ -998,6 +1017,28 @@ namespace InFalsusChartExt
             _screenShadowCamera = camera.Pointer;
         }
 
+        private static Camera ResolveGameplayCamera()
+        {
+            Camera camera = _screenShadowCameraView;
+            if (camera != null &&
+                camera.Pointer != IntPtr.Zero &&
+                camera.isActiveAndEnabled &&
+                !camera.orthographic &&
+                (camera.cullingMask & (1 << 7)) != 0)
+                return camera;
+            int frame = Time.frameCount;
+            if (frame < _nextCameraSearchFrame)
+                return null;
+            _nextCameraSearchFrame = frame + 30;
+            camera = Camera.main;
+            if (camera == null ||
+                camera.orthographic ||
+                (camera.cullingMask & (1 << 7)) == 0)
+                camera = FindGameplayCamera();
+            _screenShadowCameraView = camera;
+            return camera;
+        }
+
         private static Material CreateScreenShadowMaterial(
             Il2Cppifapp.Game.Scenes.Game.Track track)
         {
@@ -1017,26 +1058,45 @@ namespace InFalsusChartExt
                 shader = Shader.Find("Universal Render Pipeline/Unlit");
             if (shader == null) return null;
 
-            Material material = source != null
-                ? new Material(source)
-                : new Material(shader);
-            material.name = "IFCE_TrackDisplayShadowMaterial";
-            material.mainTexture = _screenShadowTexture;
-            material.SetTexture("_MainTex", _screenShadowTexture);
-            material.SetTexture("_BaseMap", _screenShadowTexture);
-            material.SetColor("_Color", new Color(1f, 1f, 1f, 0f));
-            material.SetColor("_BaseColor", new Color(1f, 1f, 1f, 0f));
-            material.SetFloat("_Stencil", 0f);
-            material.SetFloat("_ZTest", 8f);  // CompareFunction.Always
-            material.SetFloat("_ZWrite", 0f);
-            material.SetFloat("_Cull", 0f);
-            material.SetFloat("_SrcBlend", 5f); // SrcAlpha
-            material.SetFloat("_DstBlend", 10f); // OneMinusSrcAlpha
-            // The native shadow shader is part of the gameplay renderer's
-            // shader set. It is drawn with the other transparent gameplay
-            // geometry, then depth-sorted behind the nearer notes.
-            material.renderQueue = 3000;
-            return material;
+            Material material = null;
+            try
+            {
+                material = source != null
+                    ? new Material(source)
+                    : new Material(shader);
+                material.name = "IFCE_TrackDisplayShadowMaterial";
+                material.mainTexture = _screenShadowTexture;
+                material.SetTexture("_MainTex", _screenShadowTexture);
+                material.SetTexture("_BaseMap", _screenShadowTexture);
+                material.SetColor("_Color", new Color(1f, 1f, 1f, 0f));
+                material.SetColor("_BaseColor", new Color(1f, 1f, 1f, 0f));
+                material.SetFloat("_Stencil", 0f);
+                material.SetFloat("_ZTest", 8f);  // CompareFunction.Always
+                material.SetFloat("_ZWrite", 0f);
+                material.SetFloat("_Cull", 0f);
+                material.SetFloat("_SrcBlend", 5f); // SrcAlpha
+                material.SetFloat("_DstBlend", 10f); // OneMinusSrcAlpha
+                // The native shadow shader is part of the gameplay renderer's
+                // shader set. It is drawn with the other transparent gameplay
+                // geometry, then depth-sorted behind the nearer notes.
+                material.renderQueue = 3000;
+                Material result = material;
+                material = null;
+                return result;
+            }
+            catch
+            {
+                try
+                {
+                    if (material != null &&
+                        material.Pointer != IntPtr.Zero)
+                        UnityEngine.Object.Destroy(material);
+                }
+                catch
+                {
+                }
+                return null;
+            }
         }
 
         private static Material FindShadowSourceMaterial(GameObject prefab)

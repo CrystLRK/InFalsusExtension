@@ -3,7 +3,7 @@ using MelonLoader;
 using InFalsusChartExt.CustomSong.Audio;
 using InFalsusChartExt.CustomSong.Lifecycle;
 
-[assembly: MelonInfo(typeof(InFalsusChartExt.ChartExtMod), "InFalsus Chart Ext", "0.1.0-patch2", "IFCE")]
+[assembly: MelonInfo(typeof(InFalsusChartExt.ChartExtMod), "InFalsus Chart Ext", "0.1.1", "IFCE")]
 [assembly: MelonGame("lowiro", "infalsus")]
 
 namespace InFalsusChartExt
@@ -49,8 +49,6 @@ namespace InFalsusChartExt
             RegressionDiagnostics.GameplayStateTick(
                 Il2Cppifapp.Game.Scenes.Game.Track._a);
             RegressionDiagnostics.AudioTick();
-            RegressionDiagnostics.TickInput(
-                Il2Cppifapp.Game.Scenes.Game.Track._a);
             AudioOffsetRuntime.Tick();
             OptionsOverlay.Tick();
             DisplayModeRuntime.Tick();

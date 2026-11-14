@@ -20,6 +20,7 @@ namespace InFalsusChartExt
         internal static void MarkChartActive()
         {
             _sceneCleanupPending = false;
+            AutoplayScoreGuard.BeginChartSession();
         }
 
         internal static void OnSceneUnloaded(int buildIndex, string sceneName)
@@ -55,12 +56,25 @@ namespace InFalsusChartExt
 
         internal static void Dispose()
         {
+            Dispose(disposeChartContext: true);
+        }
+
+        internal static void DisposeForChartTransform()
+        {
+            Dispose(disposeChartContext: false);
+        }
+
+        private static void Dispose(bool disposeChartContext)
+        {
             _sceneCleanupPending = false;
             Run("sky-block-judge", SkyBlockJudgeRuntime.ResetForChartSwitch);
             Run("sky-block-visual", SkyBlockVisualRuntime.ResetForChartSwitch);
             Run("sky-block-line-glow", SkyBlockLineGlowRuntime.ResetForChartSwitch);
             Run("sky-block-slots", SkyBlockRuntimeSlots.Reset);
-            Run("chart-context", ChartRuntimeContext.ResetForChartSwitch);
+            if (disposeChartContext)
+                Run(
+                    "chart-context",
+                    ChartRuntimeContext.ResetForChartSwitch);
             Run("showtext", ShowTextRuntime.DisposeResources);
             Run("bomb", BombSkinRuntime.DisposeForSceneUnload);
             Run("timing-group", TimingGroupRuntime.ResetForChartSwitch);

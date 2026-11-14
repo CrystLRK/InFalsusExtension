@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using InFalsusChartExt.CustomSong.Discovery;
 using Il2Cppifapp.Game.Data;
 
@@ -147,6 +148,9 @@ namespace InFalsusChartExt.CustomSong.Scores
 
         internal static void CaptureFinalResult()
         {
+#if IFCE_DIAGNOSTICS
+            LogFinalResultDiagnostic();
+#endif
             if (AutoplayScoreGuard.ShouldSuppressResults)
             {
                 ChartExtMod.Log.Msg(
@@ -221,6 +225,166 @@ namespace InFalsusChartExt.CustomSong.Scores
                 MarkWriteFailure(exception.Message);
             }
         }
+
+#if IFCE_DIAGNOSTICS
+        private static void LogFinalResultDiagnostic()
+        {
+            try
+            {
+                GameResultV4 final =
+                    Il2Cppifapp.Game.Scenes.ResultsScene._gq;
+                CustomScoreRecord record =
+                    CustomScoreNativeBridge.ToRecord(final);
+                int nativeNotes = -1;
+                int visualNotes = -1;
+                int noInput = 0;
+                int noClip = 0;
+                ChartRuntimeFrame context =
+                    InFalsusChartExt.ChartRuntimeContext.Current;
+                if (context is not null)
+                {
+                    nativeNotes = context.NativeChart?.Count ?? 0;
+                    if (context.VisualChart is not null)
+                    {
+                        visualNotes = context.VisualChart.Count;
+                        for (int i = 0;
+                             i < context.VisualChart.Notes.Count;
+                             i++)
+                        {
+                            InFalsusChartExt.VisualNoteDescriptor note =
+                                context.VisualChart.Notes[i];
+                            if (note is null) continue;
+                            if (note.Lifetime ==
+                                InFalsusChartExt.VisualNoteLifetime.NoClip)
+                                noClip++;
+                            else
+                                noInput++;
+                        }
+                    }
+                }
+                ChartExtMod.Log.Msg(
+                    "[r7-score] " +
+                    $"score={record.Score} combo={record.MaxCombo} " +
+                    $"tap=[{FormatCounts(record.Tap)}] " +
+                    $"hold=[{FormatCounts(record.Hold)}] " +
+                    $"sky=[{FormatCounts(record.SkyArea)}] " +
+                    $"flick=[{FormatCounts(record.Flick)}] " +
+                    $"native={nativeNotes} visual={visualNotes} " +
+                    $"noinput={noInput} noclip={noClip}");
+                LogRecordStateDiagnostic();
+            }
+            catch (Exception exception)
+            {
+                ChartExtMod.Log.Warning(
+                    "[r7-score] diagnostic failed: " +
+                    exception.Message);
+            }
+        }
+
+        private static string FormatCounts(
+            JudgementCounts counts) =>
+            $"none={counts.None},miss={counts.Miss}," +
+            $"nearEarly={counts.NearEarly}," +
+            $"nearLate={counts.NearLate}," +
+            $"perfectEarly={counts.PerfectEarly}," +
+            $"perfectLate={counts.PerfectLate}," +
+            $"shiny={counts.Shiny}";
+
+        private static void LogRecordStateDiagnostic()
+        {
+            Il2Cppifapp.Game.LogicalNotePlayer player =
+                Il2Cppifapp.Game.LogicalNotePlayer._Qe;
+            Il2Cpp_b._T compiled = player?._ve;
+            var records = compiled?._XC;
+            if (records is null || records.Pointer == IntPtr.Zero)
+            {
+                ChartExtMod.Log.Msg(
+                    "[r7-records] unavailable");
+                return;
+            }
+
+            int notes = 0;
+            int segments = 0;
+            int none = 0;
+            int shiny = 0;
+            int anomalies = 0;
+            foreach (var pair in records)
+            {
+                notes++;
+                Il2CppSystem.Memory<Il2Cpp_K._cH> memory =
+                    pair.Value;
+                if (memory._object == null ||
+                    memory._object.Pointer == IntPtr.Zero)
+                    continue;
+                int count = memory._length;
+                if (count <= 0 || count > 4096)
+                    continue;
+                IntPtr arrayObject = memory._object.Pointer;
+                int sliceIndex = memory._index;
+                int arrayLength = Marshal.ReadInt32(
+                    arrayObject +
+                    NativeLayoutCatalog.ArrayLengthOffset);
+                if (sliceIndex < 0 ||
+                    sliceIndex + count > arrayLength)
+                    continue;
+                unsafe
+                {
+                    for (int r = 0; r < count; r++)
+                    {
+                        segments++;
+                        byte* record = InteropUtil.RecordPointer(
+                            arrayObject, sliceIndex, r);
+                        byte judgment =
+                            *(record +
+                              InteropUtil.JudgmentOffset);
+                        byte final =
+                            *(record +
+                              InteropUtil.FinalOffset);
+                        double relative =
+                            BitConverter.Int64BitsToDouble(
+                                *(long*)(record +
+                                    NativeLayoutCatalog.Record
+                                        .RelativeTime));
+                        double absolute =
+                            BitConverter.Int64BitsToDouble(
+                                *(long*)(record +
+                                    InteropUtil.AbsoluteTimeOffset));
+                        int recordType =
+                            *(int*)(record +
+                                InteropUtil.RecordTypeOffset);
+                        int recordState =
+                            *(int*)(record +
+                                InteropUtil.RecordStateOffset);
+                        ChartExtMod.Log.Msg(
+                            "[r7-record-map] " +
+                            $"id={pair.Key} index={r}/{count} " +
+                            $"start={absolute - relative:F1} " +
+                            $"abs={absolute:F1} rel={relative:F1} " +
+                            $"type={recordType} state={recordState} " +
+                            $"judgment={judgment} final={final}");
+                        if (judgment == ChartExtState.JudgeNone)
+                            none++;
+                        else if (judgment ==
+                                 ChartExtState.JudgeShiny)
+                            shiny++;
+                        else if (anomalies++ < 24)
+                        {
+                            ChartExtMod.Log.Msg(
+                                "[r7-record] " +
+                                $"id={pair.Key} index={r} " +
+                                $"relative={relative:F1} " +
+                                $"judgment={judgment}");
+                        }
+                    }
+                }
+            }
+            ChartExtMod.Log.Msg(
+                "[r7-records] " +
+                $"notes={notes} segments={segments} " +
+                $"none={none} shiny={shiny} " +
+                $"anomalies={anomalies}");
+        }
+#endif
 
         internal static void Reset()
         {

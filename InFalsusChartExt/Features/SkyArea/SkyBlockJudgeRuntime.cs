@@ -52,6 +52,7 @@ namespace InFalsusChartExt
         private static long _nextGlowSerial;
         private static bool _hasPreviousCursor;
         private static float _previousCursorX;
+        private static bool _independentHoldActive;
         private static readonly List<DueRecord> DueRecords =
             new List<DueRecord>(64);
         private static readonly List<SkyGroupState> FrameGroupStates =
@@ -190,6 +191,7 @@ namespace InFalsusChartExt
             _queueErrorLogged = false;
             _hasPreviousCursor = false;
             _previousCursorX = 0f;
+            _independentHoldActive = false;
             DueRecords.Clear();
             FrameGroupStates.Clear();
             FrameBlocks.Clear();
@@ -496,12 +498,6 @@ namespace InFalsusChartExt
                         NativeLayoutCatalog.Record.Final) =
                         oldFinal;
                     continue;
-                }
-                if (grade == ChartExtState.JudgeShiny &&
-                    !state.HeadSoundPlayed)
-                {
-                    state.HeadSoundPlayed = true;
-                    SkyBlockFeedbackRuntime.PlayHit();
                 }
                 if (due.RecordIndex == due.RecordCount - 1)
                 {
@@ -923,7 +919,7 @@ namespace InFalsusChartExt
             for (int i = 0; i < FrameGroupStates.Count; i++)
             {
                 SkyGroupState state = FrameGroupStates[i];
-                if (!state.HeadSoundPlayed ||
+                if (!state.Latch ||
                     !state.Covered ||
                     state.PenaltyMs > 0.0 ||
                     state.WarningMs <= 0.0)
@@ -957,9 +953,14 @@ namespace InFalsusChartExt
                     penalty <= 0.0 &&
                     covered;
             }
+            bool started =
+                independentActive &&
+                !_independentHoldActive;
+            _independentHoldActive = independentActive;
             SkyBlockFeedbackRuntime.SetSkyHoldActive(
-                independentActive,
-                nativeActive);
+                independentActive, nativeActive);
+            if (started && !nativeActive)
+                SkyBlockFeedbackRuntime.PlayHit();
         }
 
         private static unsafe bool EnqueuePresentation(
@@ -1184,7 +1185,6 @@ namespace InFalsusChartExt
                     state.Covered = false;
                     state.Latch = false;
                     state.RedLatched = false;
-                    state.HeadSoundPlayed = false;
                     ClearGlowOwner(state);
                     state.WarningMs = 0.0;
                     state.PenaltyMs = 0.0;

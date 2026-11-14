@@ -28,11 +28,6 @@ namespace InFalsusChartExt
         private static float _nextResumeSample;
         private static float _nextPauseSample;
         private const int MaxResumeSamples = 8;
-        private const int VkF10 = 0x79;
-        private static bool _f10Down;
-
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int virtualKey);
 
         private sealed class AudioFactoryTrace
         {
@@ -205,26 +200,6 @@ namespace InFalsusChartExt
                     TimingGroupRuntime.CurrentMs()));
         }
 
-        internal static void TickInput(
-            Il2Cppifapp.Game.Scenes.Game.Track track)
-        {
-            bool down =
-                (GetAsyncKeyState(VkF10) & 0x8000) != 0;
-            if (!down || _f10Down)
-            {
-                _f10Down = down;
-                return;
-            }
-            _f10Down = true;
-            if (track is null || track.Pointer == IntPtr.Zero)
-                return;
-            LogState(
-                "manual-snapshot " +
-                SkyBlockVisualRuntime.DiagnosticSnapshot(
-                    track,
-                    TimingGroupRuntime.CurrentMs()));
-        }
-
         internal static void AudioOwned(
             string stage,
             bool selection,
@@ -252,7 +227,6 @@ namespace InFalsusChartExt
             _nextAudioSample = 0f;
             _nextResumeSample = 0f;
             _nextPauseSample = 0f;
-            _f10Down = false;
         }
 
         private static void Refresh(
@@ -355,12 +329,6 @@ namespace InFalsusChartExt
 
         [Conditional("IFCE_DIAGNOSTICS")]
         internal static void TrackTick(
-            Il2Cppifapp.Game.Scenes.Game.Track track)
-        {
-        }
-
-        [Conditional("IFCE_DIAGNOSTICS")]
-        internal static void TickInput(
             Il2Cppifapp.Game.Scenes.Game.Track track)
         {
         }

@@ -47,6 +47,7 @@ namespace InFalsusChartExt
         private static readonly List<(double Time, int Order, long Id)>
             Sorted = new List<(double, int, long)>();
         private static string _loadedFor;
+        private static string _ignoredFor;
         private static Font _font;
         private static bool _fontFailed;
         private static GUIStyle _style;
@@ -120,7 +121,8 @@ namespace InFalsusChartExt
                 if (string.Equals(_loadedFor, key, StringComparison.Ordinal))
                 {
                     if (Styles.Count > 0) return;
-                    if (string.Equals(_failedFor, key, StringComparison.Ordinal))
+                    if (string.Equals(_failedFor, key, StringComparison.Ordinal) ||
+                        string.Equals(_ignoredFor, key, StringComparison.Ordinal))
                         return;
                 }
                 ResetForChartSwitch();
@@ -166,12 +168,10 @@ namespace InFalsusChartExt
                         .FirstOrDefault(File.Exists);
                 if (found == null)
                 {
-                    _failedFor = key;
-                    ChartExtMod.Log.Warning(
-                        $"[ChartExt] showtext ignored: no text sidecar for key='{key}' " +
-                        $"in '{song?.Directory ?? "(unknown)"}'");
-                    Styles.Clear();
-                    Sorted.Clear();
+                    MarkIgnored(
+                        key,
+                        "no text sidecar in '" +
+                        (song?.Directory ?? "(unknown)") + "'");
                     return;
                 }
 
@@ -179,7 +179,16 @@ namespace InFalsusChartExt
                 JsonElement arr = doc.RootElement;
                 if (arr.ValueKind == JsonValueKind.Object && arr.TryGetProperty("texts", out JsonElement texts))
                     arr = texts;
-                if (arr.ValueKind != JsonValueKind.Array) return;
+                if (arr.ValueKind != JsonValueKind.Array)
+                {
+                    MarkIgnored(key, "sidecar root has no texts array");
+                    return;
+                }
+                if (arr.GetArrayLength() == 0)
+                {
+                    MarkIgnored(key, "sidecar texts array is empty");
+                    return;
+                }
 
                 foreach (JsonElement el in arr.EnumerateArray())
                 {
@@ -252,6 +261,7 @@ namespace InFalsusChartExt
         internal static void ResetForChartSwitch()
         {
             _loadedFor = null;
+            _ignoredFor = null;
             _failedFor = null;
             _fatalFor = null;
             _fatalTitle = null;
@@ -409,6 +419,25 @@ namespace InFalsusChartExt
             Styles.Clear();
             Sorted.Clear();
             ResetFastSchedule();
+        }
+
+        private static void MarkIgnored(
+            string chartKey,
+            string reason)
+        {
+            _ignoredFor = chartKey;
+            Styles.Clear();
+            Sorted.Clear();
+            ResetFastSchedule();
+            try
+            {
+                ChartExtMod.Log.Warning(
+                    $"[ChartExt] showtext ignored for key='" +
+                    $"{chartKey}': {reason}");
+            }
+            catch
+            {
+            }
         }
 
         private static void DrawFatalError()
@@ -935,6 +964,7 @@ namespace InFalsusChartExt
 
         private static bool EnsureShadowResources()
         {
+            Material pendingMaterial = null;
             try
             {
                 if (_shadowMesh == null) _shadowMesh = CreateShadowQuad();
@@ -945,30 +975,35 @@ namespace InFalsusChartExt
                     if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
                     if (shader == null) shader = Shader.Find("Sprites/Default");
                     if (shader == null) return false;
-                    var material = new Material(shader)
+                    pendingMaterial = new Material(shader)
                     {
                         name = "IFCE_ShowTextShadowMaterial",
                     };
-                    material.mainTexture = _shadowTexture;
-                    material.SetTexture("_MainTex", _shadowTexture);
-                    material.SetTexture("_BaseMap", _shadowTexture);
-                    material.SetColor("_Color", Color.black);
-                    material.SetColor("_BaseColor", Color.black);
-                    material.SetFloat("_Stencil", 0f);
-                    material.SetFloat("_ZTest", 8f);
-                    material.SetFloat("_ZWrite", 0f);
-                    material.SetFloat("_Cull", 0f);
-                    material.SetFloat("_SrcBlend", 5f);
-                    material.SetFloat("_DstBlend", 10f);
-                    material.SetFloat("_SrcBlendAlpha", 1f);
-                    material.SetFloat("_DstBlendAlpha", 10f);
-                    material.renderQueue = 3000;
-                    _shadowSourceMaterial = material;
+                    pendingMaterial.mainTexture = _shadowTexture;
+                    pendingMaterial.SetTexture("_MainTex", _shadowTexture);
+                    pendingMaterial.SetTexture("_BaseMap", _shadowTexture);
+                    pendingMaterial.SetColor("_Color", Color.black);
+                    pendingMaterial.SetColor("_BaseColor", Color.black);
+                    pendingMaterial.SetFloat("_Stencil", 0f);
+                    pendingMaterial.SetFloat("_ZTest", 8f);
+                    pendingMaterial.SetFloat("_ZWrite", 0f);
+                    pendingMaterial.SetFloat("_Cull", 0f);
+                    pendingMaterial.SetFloat("_SrcBlend", 5f);
+                    pendingMaterial.SetFloat("_DstBlend", 10f);
+                    pendingMaterial.SetFloat("_SrcBlendAlpha", 1f);
+                    pendingMaterial.SetFloat("_DstBlendAlpha", 10f);
+                    pendingMaterial.renderQueue = 3000;
+                    _shadowSourceMaterial = pendingMaterial;
+                    pendingMaterial = null;
                 }
                 return _shadowMesh != null && _shadowTexture != null &&
                        _shadowSourceMaterial != null;
             }
-            catch { return false; }
+            catch
+            {
+                DestroyFastOwned(null, pendingMaterial);
+                return false;
+            }
         }
 
         private static Mesh CreateShadowQuad()

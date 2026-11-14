@@ -57,6 +57,9 @@ namespace InFalsusChartExt
             new MaterialPropertyBlock();
         private static readonly HashSet<IntPtr> OwnedRenderers =
             new HashSet<IntPtr>();
+        private static readonly Dictionary<IntPtr, MeshRenderer>
+            RendererViewCache =
+                new Dictionary<IntPtr, MeshRenderer>();
         private static int _generation = -1;
         private static int _pendingGeneration = -1;
         private static ulong _pendingSignature;
@@ -309,6 +312,7 @@ namespace InFalsusChartExt
             _generation = generation;
             _pendingSignature = 0;
             _pendingStableFrames = 0;
+            RendererViewCache.Clear();
             return true;
         }
 
@@ -431,7 +435,13 @@ namespace InFalsusChartExt
             {
                 try
                 {
-                    var renderer = new MeshRenderer(pointer);
+                    if (!RendererViewCache.TryGetValue(
+                            pointer, out MeshRenderer renderer) ||
+                        renderer == null)
+                    {
+                        renderer = new MeshRenderer(pointer);
+                        RendererViewCache[pointer] = renderer;
+                    }
                     renderer.SetPropertyBlock(ClearBlock);
                 }
                 catch { }

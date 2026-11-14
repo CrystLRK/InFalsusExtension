@@ -27,6 +27,8 @@ namespace InFalsusChartExt
             NativeLayoutCatalog.Background.ConstrainedMaterial;
 
         private static IntPtr _lastMaterial;
+        private static IntPtr _lastMaterialViewPtr;
+        private static Material _lastMaterialView;
         private static string _appliedPath;
         private static long _appliedStamp = -1;
         private static string _loggedMissingFor;
@@ -40,6 +42,7 @@ namespace InFalsusChartExt
         private static Color _baseColor = Color.white;
         private static bool _baseColorCaptured;
         private static IntPtr _nativeOriginalMaterial;
+        private static IntPtr _nativeMaterialOwner;
         private static int _findAttempts;
         private static int _nextFindFrame;
         private static int _findExhaustedGeneration = -1;
@@ -64,6 +67,8 @@ namespace InFalsusChartExt
             _baseColor = Color.white;
             _baseColorCaptured = false;
             _lastMaterial = IntPtr.Zero;
+            _lastMaterialViewPtr = IntPtr.Zero;
+            _lastMaterialView = null;
         }
 
         internal static void SetEnabled(bool enabled)
@@ -76,10 +81,14 @@ namespace InFalsusChartExt
                 ReleaseCustomTexture();
                 ResetFindState();
                 _lastMaterial = IntPtr.Zero;
+                _lastMaterialViewPtr = IntPtr.Zero;
+                _lastMaterialView = null;
             }
             else
             {
                 _lastMaterial = IntPtr.Zero;
+                _lastMaterialViewPtr = IntPtr.Zero;
+                _lastMaterialView = null;
                 ResetFindState();
             }
         }
@@ -97,7 +106,10 @@ namespace InFalsusChartExt
             catch { }
             _nativeMaterial = null;
             _nativeOriginalMaterial = IntPtr.Zero;
+            _nativeMaterialOwner = IntPtr.Zero;
             _lastMaterial = IntPtr.Zero;
+            _lastMaterialViewPtr = IntPtr.Zero;
+            _lastMaterialView = null;
             _baseTexture = null;
             _baseMaterial = IntPtr.Zero;
             _baseColor = Color.white;
@@ -204,7 +216,7 @@ namespace InFalsusChartExt
                 }
                 try
                 {
-                    var material = new Material(_lastMaterial);
+                    var material = GetLastMaterialView();
                     if (material != null &&
                         material.Pointer != IntPtr.Zero)
                         TryApply(material);
@@ -221,7 +233,7 @@ namespace InFalsusChartExt
             }
             try
             {
-                Material material = new Material(_lastMaterial);
+                Material material = GetLastMaterialView();
                 if (material == null || material.Pointer == IntPtr.Zero) return;
                 TryApply(material);
             }
@@ -663,6 +675,7 @@ namespace InFalsusChartExt
             catch { }
             _nativeMaterial = null;
             _nativeOriginalMaterial = IntPtr.Zero;
+            _nativeMaterialOwner = IntPtr.Zero;
             _baseMaterial = IntPtr.Zero;
             _baseTexture = null;
             _baseColor = Color.white;
@@ -677,30 +690,19 @@ namespace InFalsusChartExt
                 return;
             try
             {
-                Il2Cpp.GenericGameplayBackground[] components =
-                    UnityEngine.Object.FindObjectsOfType<
-                        Il2Cpp.GenericGameplayBackground>();
-                if (components == null) return;
-                for (int i = 0; i < components.Length; i++)
+                IntPtr clone = _nativeMaterial.Pointer;
+                if (TryFindNativeMaterialOwner(
+                        clone, out IntPtr owner) &&
+                    Marshal.ReadIntPtr(
+                        owner + ConstrainedMaterialOffset) == clone)
                 {
-                    Il2Cpp.GenericGameplayBackground component =
-                        components[i];
-                    if (component == null ||
-                        component.Pointer == IntPtr.Zero)
-                        continue;
-                    IntPtr quad = Marshal.ReadIntPtr(
-                        component.Pointer + OutputQuadOffset);
-                    if (quad == IntPtr.Zero) continue;
-                    IntPtr current = Marshal.ReadIntPtr(
-                        quad + ConstrainedMaterialOffset);
-                    if (current != _nativeMaterial.Pointer)
-                        continue;
                     Marshal.WriteIntPtr(
-                        quad + ConstrainedMaterialOffset,
+                        owner + ConstrainedMaterialOffset,
                         _nativeOriginalMaterial);
                 }
             }
             catch { }
+            _nativeMaterialOwner = IntPtr.Zero;
         }
 
         /// <summary>
@@ -762,6 +764,7 @@ namespace InFalsusChartExt
                 try { material.color = Color.white; } catch { }
                 _nativeMaterial = material;
                 _nativeOriginalMaterial = gameMaterial;
+                _nativeMaterialOwner = IntPtr.Zero;
                 try
                 {
                     ChartExtMod.Log.Msg(
@@ -785,6 +788,7 @@ namespace InFalsusChartExt
                 catch { }
                 _nativeMaterial = null;
                 _nativeOriginalMaterial = IntPtr.Zero;
+                _nativeMaterialOwner = IntPtr.Zero;
                 if (_errors < 10)
                 {
                     _errors++;
@@ -798,24 +802,54 @@ namespace InFalsusChartExt
         {
             Material ours = _nativeMaterial;
             if (ours == null || ours.Pointer == IntPtr.Zero) return false;
+            return TryFindNativeMaterialOwner(
+                ours.Pointer, out _);
+        }
+
+        private static bool TryFindNativeMaterialOwner(
+            IntPtr material, out IntPtr owner)
+        {
+            owner = IntPtr.Zero;
+            if (material == IntPtr.Zero)
+                return false;
             try
             {
-                Il2Cpp.GenericGameplayBackground[] components =
-                    UnityEngine.Object.FindObjectsOfType<Il2Cpp.GenericGameplayBackground>();
-                if (components == null) return false;
-                for (int i = 0; i < components.Length; i++)
+                if (_nativeMaterialOwner != IntPtr.Zero &&
+                    Marshal.ReadIntPtr(
+                        _nativeMaterialOwner +
+                        ConstrainedMaterialOffset) == material)
                 {
-                    Il2Cpp.GenericGameplayBackground component = components[i];
-                    if (component == null || component.Pointer == IntPtr.Zero) continue;
-                    IntPtr quad = Marshal.ReadIntPtr(
-                        component.Pointer + OutputQuadOffset);
-                    if (quad == IntPtr.Zero) continue;
-                    IntPtr material = Marshal.ReadIntPtr(
-                        quad + ConstrainedMaterialOffset);
-                    if (material == ours.Pointer) return true;
+                    owner = _nativeMaterialOwner;
+                    return true;
+                }
+                MonoBehaviour[] behaviours =
+                    UnityEngine.Object.FindObjectsOfType<
+                        MonoBehaviour>(true);
+                if (behaviours == null) return false;
+                for (int i = 0; i < behaviours.Length; i++)
+                {
+                    MonoBehaviour component = behaviours[i];
+                    if (component == null ||
+                        component.Pointer == IntPtr.Zero)
+                        continue;
+                    if (!string.Equals(
+                            NativeClassName(component),
+                            "Constrained2D",
+                            StringComparison.Ordinal))
+                        continue;
+                    if (Marshal.ReadIntPtr(
+                            component.Pointer +
+                            ConstrainedMaterialOffset) != material)
+                        continue;
+                    _nativeMaterialOwner = component.Pointer;
+                    owner = component.Pointer;
+                    return true;
                 }
             }
-            catch { }
+            catch
+            {
+            }
+            _nativeMaterialOwner = IntPtr.Zero;
             return false;
         }
 
@@ -916,6 +950,19 @@ namespace InFalsusChartExt
             try { material.mainTexture = texture; } catch { }
             try { material.SetTexture("_BaseMap", texture); } catch { }
             try { material.SetTexture("_MainTex", texture); } catch { }
+        }
+
+        private static Material GetLastMaterialView()
+        {
+            if (_lastMaterial == IntPtr.Zero)
+                return null;
+            if (_lastMaterialView == null ||
+                _lastMaterialViewPtr != _lastMaterial)
+            {
+                _lastMaterialViewPtr = _lastMaterial;
+                _lastMaterialView = new Material(_lastMaterial);
+            }
+            return _lastMaterialView;
         }
 
         private static string ResolveBackgroundPath(

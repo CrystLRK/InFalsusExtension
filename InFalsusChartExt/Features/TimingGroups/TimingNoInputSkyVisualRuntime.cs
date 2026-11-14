@@ -35,6 +35,8 @@ namespace InFalsusChartExt
             public Vector2 PreviousRange = new Vector2(0f, 1f);
             public Vector2 NextRange = new Vector2(0f, 1f);
             public int SeenFrame = -1;
+            public readonly List<Material> OwnedMaterials =
+                new List<Material>(4);
         }
 
         private sealed class RangeInfo
@@ -535,16 +537,15 @@ namespace InFalsusChartExt
             Entry entry = null;
             try
             {
-                entry = new Entry
-                {
-                    Id = id,
-                    Band = CreateArea(
-                        track, track.safeAreaPrefab,
-                        $"IFCE_NoInputSky_{id}"),
-                    Shadow = CreateArea(
-                        track, track.safeAreaShadowPrefab,
-                        $"IFCE_NoInputSkyShadow_{id}")
-                };
+                entry = new Entry { Id = id };
+                entry.Band = CreateArea(
+                    track, track.safeAreaPrefab,
+                    $"IFCE_NoInputSky_{id}",
+                    entry.OwnedMaterials);
+                entry.Shadow = CreateArea(
+                    track, track.safeAreaShadowPrefab,
+                    $"IFCE_NoInputSkyShadow_{id}",
+                    entry.OwnedMaterials);
                 if (entry.Band == null || entry.Shadow == null)
                 {
                     DestroyEntry(entry);
@@ -577,7 +578,8 @@ namespace InFalsusChartExt
 
         private static GameObject CreateArea(
             Il2Cppifapp.Game.Scenes.Game.Track track,
-            GameObject prefab, string name)
+            GameObject prefab, string name,
+            List<Material> ownedMaterials)
         {
             if (prefab == null || prefab.Pointer == IntPtr.Zero)
                 return null;
@@ -600,8 +602,8 @@ namespace InFalsusChartExt
                     if (filter != null) area.meshFilter = filter;
                     if (renderer != null) area.meshRenderer = renderer;
                 }
-                if (renderer != null && renderer.sharedMaterial != null)
-                    renderer.material = new Material(renderer.sharedMaterial);
+                if (renderer != null)
+                    ownedMaterials.AddRange(CloneMaterials(go));
                 if (renderer != null)
                 {
                     renderer.forceRenderingOff = false;
@@ -612,7 +614,7 @@ namespace InFalsusChartExt
             }
             catch
             {
-                DestroyOwnedArea(go);
+                TryDestroy(go);
                 throw;
             }
         }
@@ -796,13 +798,17 @@ namespace InFalsusChartExt
                     entry.LeftBracket.transform.SetParent(parent, false);
                     entry.RightBracket.transform.SetParent(parent, false);
                 }
-                CloneMaterials(entry.LeftBracket);
-                CloneMaterials(entry.RightBracket);
+                List<Material> bracketMaterials =
+                    CloneMaterials(entry.LeftBracket);
+                bracketMaterials.AddRange(
+                    CloneMaterials(entry.RightBracket));
+                entry.OwnedMaterials.AddRange(
+                    bracketMaterials);
             }
             catch (Exception e)
             {
-                DestroyOwnedArea(entry.LeftBracket);
-                DestroyOwnedArea(entry.RightBracket);
+                TryDestroy(entry.LeftBracket);
+                TryDestroy(entry.RightBracket);
                 entry.LeftBracket = null;
                 entry.RightBracket = null;
                 if (_errors++ < 20)
@@ -811,40 +817,42 @@ namespace InFalsusChartExt
             }
         }
 
-        private static void DestroyOwnedArea(GameObject go)
+        private static List<Material> CloneMaterials(GameObject root)
         {
-            if (go == null || go.Pointer == IntPtr.Zero)
-                return;
+            var owned = new List<Material>(4);
+            if (root == null || root.Pointer == IntPtr.Zero)
+                return owned;
             try
             {
                 var renderers =
-                    go.GetComponentsInChildren<MeshRenderer>(true);
+                    root.GetComponentsInChildren<MeshRenderer>(true);
                 for (int i = 0;
                      renderers != null && i < renderers.Length;
                      i++)
                 {
-                    Material material = renderers[i]?.sharedMaterial;
-                    if (material != null &&
-                        material.Pointer != IntPtr.Zero)
-                        UnityEngine.Object.Destroy(material);
+                    MeshRenderer renderer = renderers[i];
+                    if (renderer == null ||
+                        renderer.sharedMaterial == null)
+                        continue;
+                    Material clone = new Material(
+                        renderer.sharedMaterial);
+                    try
+                    {
+                        renderer.sharedMaterial = clone;
+                        owned.Add(clone);
+                    }
+                    catch
+                    {
+                        UnityEngine.Object.Destroy(clone);
+                        throw;
+                    }
                 }
+                return owned;
             }
-            catch { }
-            try { UnityEngine.Object.Destroy(go); }
-            catch { }
-        }
-
-        private static void CloneMaterials(GameObject root)
-        {
-            var renderers =
-                root.GetComponentsInChildren<MeshRenderer>(true);
-            if (renderers == null) return;
-            for (int i = 0; i < renderers.Length; i++)
+            catch
             {
-                if (renderers[i] != null &&
-                    renderers[i].sharedMaterial != null)
-                    renderers[i].material =
-                        new Material(renderers[i].sharedMaterial);
+                DestroyMaterials(owned);
+                throw;
             }
         }
 
@@ -909,30 +917,41 @@ namespace InFalsusChartExt
         private static void DestroyEntry(Entry entry)
         {
             if (entry == null) return;
-            DestroyMaterials(entry.Band);
-            DestroyMaterials(entry.Shadow);
-            DestroyMaterials(entry.LeftBracket);
-            DestroyMaterials(entry.RightBracket);
+            DestroyMaterials(entry.OwnedMaterials);
+            entry.OwnedMaterials.Clear();
             try { if (entry.Band != null) UnityEngine.Object.Destroy(entry.Band); } catch { }
             try { if (entry.Shadow != null) UnityEngine.Object.Destroy(entry.Shadow); } catch { }
             try { if (entry.LeftBracket != null) UnityEngine.Object.Destroy(entry.LeftBracket); } catch { }
             try { if (entry.RightBracket != null) UnityEngine.Object.Destroy(entry.RightBracket); } catch { }
         }
 
-        private static void DestroyMaterials(GameObject root)
+        private static void DestroyMaterials(
+            IReadOnlyList<Material> materials)
         {
-            if (root == null || root.Pointer == IntPtr.Zero) return;
-            try
+            for (int i = 0; i < materials.Count; i++)
             {
-                var renderers = root.GetComponentsInChildren<MeshRenderer>(true);
-                for (int i = 0; renderers != null && i < renderers.Length; i++)
+                Material material = materials[i];
+                try
                 {
-                    Material material = renderers[i]?.sharedMaterial;
                     if (material != null && material.Pointer != IntPtr.Zero)
                         UnityEngine.Object.Destroy(material);
                 }
+                catch
+                {
+                }
             }
-            catch { }
+        }
+
+        private static void TryDestroy(GameObject go)
+        {
+            try
+            {
+                if (go != null && go.Pointer != IntPtr.Zero)
+                    UnityEngine.Object.Destroy(go);
+            }
+            catch
+            {
+            }
         }
     }
 }

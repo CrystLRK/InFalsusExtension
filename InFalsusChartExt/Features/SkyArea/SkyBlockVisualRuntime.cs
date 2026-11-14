@@ -35,6 +35,8 @@ namespace InFalsusChartExt
             internal bool BracketsActive;
             internal bool BandActive;
             internal bool ShadowActive;
+            internal readonly List<Material> OwnedMaterials =
+                new List<Material>(4);
         }
 
         private static readonly List<SkyBlockMember>
@@ -46,6 +48,8 @@ namespace InFalsusChartExt
         private static int _generation = -1;
         private static int _cursor;
         private static double _lastNow = double.NaN;
+        private static double _visualNowInput = double.NaN;
+        private static double _visualNowValue = double.NaN;
         private static double _spawnLeadMs =
             VisualSpawnTiming.NativeQuickLeadMs;
         private static int _creationsThisFrame;
@@ -62,11 +66,26 @@ namespace InFalsusChartExt
             _generation = generation;
             _cursor = 0;
             _lastNow = double.NaN;
+            _visualNowInput = double.NaN;
+            _visualNowValue = double.NaN;
             ActiveMembers.Clear();
             _entries = plan == null ||
                        plan.VisualMembers.Count == 0
                 ? Array.Empty<Entry>()
                 : new Entry[plan.VisualMembers.Count];
+            if (plan != null)
+            {
+                for (int i = 0;
+                     i < plan.VisualMembers.Count;
+                     i++)
+                {
+                    SkyBlockMember member =
+                        plan.VisualMembers[i];
+                    member.VisualTimingGeneration = -1;
+                    member.VisualStartMs = 0.0;
+                    member.VisualEndMs = 0.0;
+                }
+            }
         }
 
         internal static void Tick(
@@ -122,6 +141,10 @@ namespace InFalsusChartExt
                     if (!SkyBlockRuntimeSlots.TryNote(
                             member, out IntPtr notePtr))
                     {
+                        Entry unavailableEntry =
+                            _entries[member.VisualIndex];
+                        if (unavailableEntry != null)
+                            Hide(unavailableEntry);
                         if (!ShouldRetainUnavailableMember(
                                 member, now))
                         {
@@ -133,29 +156,19 @@ namespace InFalsusChartExt
                     if (now >= member.EndMs &&
                         !member.JudgementSettled)
                         SyncFinalRecordState(member);
-                    double visualNow =
-                        TimingGroupRuntime.VisualTimeMs(
-                            member.TimingGroup, now);
-                    double visualStart =
-                        TimingGroupRuntime.VisualTimeMs(
-                            member.TimingGroup, member.StartMs);
-                    double visualEnd =
-                        TimingGroupRuntime.VisualTimeMs(
-                            member.TimingGroup, member.EndMs);
-                    if (!IsFinite(visualNow) ||
-                        !IsFinite(visualStart) ||
-                        !IsFinite(visualEnd) ||
-                        visualEnd <= visualStart)
+                    if (!TryGetVisualTiming(
+                            member, now,
+                            out double visualNow,
+                            out double visualStart,
+                            out double visualEnd))
                         continue;
 
                     double leadMs = PositionLeadMs(
-                        member, now, visualStart, visualNow);
+                        visualStart, visualNow);
                     double durationMs =
                         visualEnd - visualStart;
                     double endDeltaMs =
-                        member.TimingGroup == 0
-                            ? member.EndMs - now
-                            : visualEnd - visualNow;
+                        visualEnd - visualNow;
                     if (leadMs > _spawnLeadMs)
                     {
                         ReleaseActiveAt(i);
@@ -167,8 +180,14 @@ namespace InFalsusChartExt
                             1.0,
                             (visualNow - visualStart) /
                             (visualEnd - visualStart)));
+                    double meshProgress = member.TimingGroup == 0
+                        ? RawProgress(member, now)
+                        : progress;
+                    double meshEndDeltaMs = member.TimingGroup == 0
+                        ? member.EndMs - now
+                        : endDeltaMs;
                     if (ShouldReleaseAfterLine(
-                            member, progress, endDeltaMs,
+                            member, meshProgress, meshEndDeltaMs,
                             now))
                     {
                         ReleaseActiveAt(i);
@@ -179,7 +198,7 @@ namespace InFalsusChartExt
                         ShouldRetainWholeStrip(
                             member, now);
                     bool forceFullRed =
-                        progress >= 1.0 && retainWholeStrip;
+                        meshProgress >= 1.0 && retainWholeStrip;
 
                     Entry entry = _entries[member.VisualIndex];
                     if (entry == null)
@@ -194,8 +213,8 @@ namespace InFalsusChartExt
                     }
                     UpdateEntry(
                         track, entry, notePtr,
-                        ref now, leadMs, durationMs,
-                        progress, retainWholeStrip,
+                        now, visualNow, leadMs, durationMs,
+                        meshProgress, retainWholeStrip,
                         forceFullRed);
                 }
             }
@@ -213,6 +232,8 @@ namespace InFalsusChartExt
             _generation = -1;
             _cursor = 0;
             _lastNow = double.NaN;
+            _visualNowInput = double.NaN;
+            _visualNowValue = double.NaN;
         }
 
         private static void RefreshActiveMembers(
@@ -273,26 +294,134 @@ namespace InFalsusChartExt
             SkyBlockMember member,
             double now)
         {
-            return PositionLeadMs(
-                member,
-                now,
-                TimingGroupRuntime.VisualTimeMs(
-                    member.TimingGroup,
-                    member.StartMs),
-                TimingGroupRuntime.VisualTimeMs(
-                    member.TimingGroup,
-                    now));
+            if (!TryGetVisualTiming(
+                    member, now,
+                    out double visualNow,
+                    out double visualStart,
+                    out _))
+                return double.PositiveInfinity;
+            return visualStart - visualNow;
         }
 
         private static double PositionLeadMs(
-            SkyBlockMember member,
-            double now,
             double visualStart,
             double visualNow)
         {
-            return member.TimingGroup == 0
-                ? member.StartMs - now
-                : visualStart - visualNow;
+            return visualStart - visualNow;
+        }
+
+        /// <summary>
+        /// Native Track.Update positions ordinary notes from the compiled `_IA`
+        /// scroll times and the current global visual time. The mesh trim
+        /// progress is a separate raw `_Ee` quantity. Keep this method limited
+        /// to the geometry clock; callers source mesh progress from authored
+        /// milliseconds. A positive timing group keeps its projected timeline.
+        /// </summary>
+        internal static bool TryGetVisualTiming(
+            SkyBlockMember member,
+            double now,
+            out double visualNow,
+            out double visualStart,
+            out double visualEnd)
+        {
+            if (member.TimingGroup == 0)
+            {
+                if (!TryGetCachedGlobalVisualTiming(
+                        member,
+                        out visualStart,
+                        out visualEnd))
+                {
+                    visualNow = now;
+                    visualStart = member.StartMs;
+                    visualEnd = member.EndMs;
+                }
+                else
+                {
+                    visualNow = GlobalVisualNow(now);
+                    if (!IsFinite(visualNow) ||
+                        visualEnd <= visualStart)
+                    {
+                        visualNow = now;
+                        visualStart = member.StartMs;
+                        visualEnd = member.EndMs;
+                    }
+                }
+            }
+            else if (!TimingGroupRuntime.TryGetNativeVisualTiming(
+                         member.TimingGroup,
+                         now,
+                         member.StartMs,
+                         member.EndMs,
+                         out visualNow,
+                         out visualStart,
+                         out visualEnd))
+                return false;
+            return IsFinite(visualNow) &&
+                   IsFinite(visualStart) &&
+                   IsFinite(visualEnd) &&
+                   visualEnd > visualStart;
+        }
+
+        private static bool TryGetCachedGlobalVisualTiming(
+            SkyBlockMember member,
+            out double startMs,
+            out double endMs)
+        {
+            startMs = 0.0;
+            endMs = 0.0;
+            int generation = ChartExtState.CompileGeneration;
+            if (generation >= 0 &&
+                member.VisualTimingGeneration == generation)
+            {
+                startMs = member.VisualStartMs;
+                endMs = member.VisualEndMs;
+                return true;
+            }
+            if (!TimingGroupRuntime.TryGetCompiledVisualTimes(
+                    member.Id,
+                    member.StartMs,
+                    member.EndMs,
+                    out startMs,
+                    out endMs))
+                return false;
+            if (generation >= 0)
+            {
+                member.VisualStartMs = startMs;
+                member.VisualEndMs = endMs;
+                member.VisualTimingGeneration = generation;
+            }
+            return true;
+        }
+
+        private static double GlobalVisualNow(double now)
+        {
+            if (double.IsNaN(now) ||
+                double.IsInfinity(now))
+                return double.NaN;
+            if (!double.IsNaN(_visualNowInput) &&
+                now == _visualNowInput)
+                return _visualNowValue;
+            double value =
+                TimingGroupRuntime.VisualTimeMs(0, now);
+            _visualNowInput = now;
+            _visualNowValue = value;
+            return value;
+        }
+
+        internal static double RawProgress(
+            SkyBlockMember member, double now)
+        {
+            if (member == null)
+                return 0.0;
+            double duration =
+                (double)member.EndMs - member.StartMs;
+            if (!(duration > 0.0))
+                return 0.0;
+            double value =
+                (now - member.StartMs) / duration;
+            if (value <= 0.0) return 0.0;
+            if (value >= 1.0) return 1.0;
+            return value;
         }
 
         private static bool ShouldTrackMember(
@@ -413,16 +542,15 @@ namespace InFalsusChartExt
             Entry entry = null;
             try
             {
-                entry = new Entry
-                {
-                    Member = member,
-                    Band = CreateArea(
-                        track, track.safeAreaPrefab,
-                        $"IFCE_SkyBlock_{member.Id}"),
-                    Shadow = CreateArea(
-                        track, track.safeAreaShadowPrefab,
-                        $"IFCE_SkyBlockShadow_{member.Id}"),
-                };
+                entry = new Entry { Member = member };
+                entry.Band = CreateArea(
+                    track, track.safeAreaPrefab,
+                    $"IFCE_SkyBlock_{member.Id}",
+                    entry.OwnedMaterials);
+                entry.Shadow = CreateArea(
+                    track, track.safeAreaShadowPrefab,
+                    $"IFCE_SkyBlockShadow_{member.Id}",
+                    entry.OwnedMaterials);
                 if (entry.Band == null ||
                     entry.Shadow == null)
                 {
@@ -498,7 +626,8 @@ namespace InFalsusChartExt
 
         private static GameObject CreateArea(
             Il2Cppifapp.Game.Scenes.Game.Track track,
-            GameObject prefab, string name)
+            GameObject prefab, string name,
+            List<Material> ownedMaterials)
         {
             if (prefab == null ||
                 prefab.Pointer == IntPtr.Zero)
@@ -523,10 +652,8 @@ namespace InFalsusChartExt
                     if (renderer != null)
                         area.meshRenderer = renderer;
                 }
-                if (renderer != null &&
-                    renderer.sharedMaterial != null)
-                    renderer.material =
-                        new Material(renderer.sharedMaterial);
+                if (renderer != null)
+                    ownedMaterials.AddRange(CloneMaterials(go));
                 if (renderer != null)
                 {
                     renderer.forceRenderingOff = false;
@@ -537,7 +664,7 @@ namespace InFalsusChartExt
             }
             catch
             {
-                DestroyOwnedArea(go);
+                TryDestroy(go);
                 throw;
             }
         }
@@ -545,7 +672,8 @@ namespace InFalsusChartExt
         private static unsafe void UpdateEntry(
             Il2Cppifapp.Game.Scenes.Game.Track track,
             Entry entry, IntPtr notePtr,
-            ref double nowMs, double leadMs,
+            double rawNowMs, double visualNowMs,
+            double leadMs,
             double durationMs, double progress,
             bool retainWholeStrip,
             bool forceFullRed)
@@ -574,7 +702,7 @@ namespace InFalsusChartExt
             Vector2 nextRange =
                 GetRenderRange(member, false);
             ApplyColor(
-                track, entry, member.AuthoredGroup, nowMs);
+                track, entry, member.AuthoredGroup, rawNowMs);
 
             float bandScale = ReadFloat(
                 track.Pointer +
@@ -602,14 +730,14 @@ namespace InFalsusChartExt
             float shadowZScale = (float)trackScale;
             double visualLength =
                 durationSeconds * visualScale;
-            double chartSeconds = nowMs / 1000.0;
+            double chartSeconds = visualNowMs / 1000.0;
             double displayLeadMs = leadMs;
             double noteStartSeconds =
                 chartSeconds + displayLeadMs / 1000.0;
             float redFactor = forceFullRed
                 ? 1f
                 : SkyBlockJudgeRuntime.TryGetMemberRedFactor(
-                        member, nowMs, out float currentRed)
+                        member, rawNowMs, out float currentRed)
                     ? currentRed
                     : 0f;
             // Native visual lifetime is decided by the last record, not by
@@ -800,57 +928,62 @@ namespace InFalsusChartExt
                     entry.RightBracket.transform.SetParent(
                         parent, false);
                 }
-                CloneMaterials(entry.LeftBracket);
-                CloneMaterials(entry.RightBracket);
+                List<Material> bracketMaterials =
+                    CloneMaterials(entry.LeftBracket);
+                bracketMaterials.AddRange(
+                    CloneMaterials(entry.RightBracket));
+                entry.OwnedMaterials.AddRange(
+                    bracketMaterials);
                 entry.LeftBracket.SetActive(false);
                 entry.RightBracket.SetActive(false);
                 entry.BracketsActive = false;
             }
             catch (Exception e)
             {
-                DestroyOwnedArea(entry.LeftBracket);
-                DestroyOwnedArea(entry.RightBracket);
+                TryDestroy(entry.LeftBracket);
+                TryDestroy(entry.RightBracket);
                 entry.LeftBracket = null;
                 entry.RightBracket = null;
                 LogError("brackets", e);
             }
         }
 
-        private static void DestroyOwnedArea(GameObject go)
+        private static List<Material> CloneMaterials(GameObject root)
         {
-            if (go == null || go.Pointer == IntPtr.Zero)
-                return;
+            var owned = new List<Material>(4);
+            if (root == null || root.Pointer == IntPtr.Zero)
+                return owned;
             try
             {
                 var renderers =
-                    go.GetComponentsInChildren<MeshRenderer>(true);
+                    root.GetComponentsInChildren<MeshRenderer>(true);
                 for (int i = 0;
                      renderers != null && i < renderers.Length;
                      i++)
                 {
-                    Material material = renderers[i]?.sharedMaterial;
-                    if (material != null &&
-                        material.Pointer != IntPtr.Zero)
-                        UnityEngine.Object.Destroy(material);
+                    MeshRenderer renderer = renderers[i];
+                    if (renderer == null ||
+                        renderer.sharedMaterial == null)
+                        continue;
+                    Material clone = new Material(
+                        renderer.sharedMaterial);
+                    try
+                    {
+                        renderer.sharedMaterial = clone;
+                        owned.Add(clone);
+                    }
+                    catch
+                    {
+                        UnityEngine.Object.Destroy(clone);
+                        throw;
+                    }
                 }
+                return owned;
             }
-            catch { }
-            try { UnityEngine.Object.Destroy(go); }
-            catch { }
-        }
-
-        private static void CloneMaterials(GameObject root)
-        {
-            var renderers =
-                root.GetComponentsInChildren<MeshRenderer>(true);
-            if (renderers == null) return;
-            for (int i = 0; i < renderers.Length; i++)
+            catch
             {
-                if (renderers[i] != null &&
-                    renderers[i].sharedMaterial != null)
-                    renderers[i].material =
-                        new Material(
-                            renderers[i].sharedMaterial);
+                DestroyMaterials(owned);
+                throw;
             }
         }
 
@@ -899,10 +1032,8 @@ namespace InFalsusChartExt
         private static void DestroyEntry(Entry entry)
         {
             if (entry == null) return;
-            DestroyMaterials(entry.Band);
-            DestroyMaterials(entry.Shadow);
-            DestroyMaterials(entry.LeftBracket);
-            DestroyMaterials(entry.RightBracket);
+            DestroyMaterials(entry.OwnedMaterials);
+            entry.OwnedMaterials.Clear();
             TryDestroy(entry.Band);
             TryDestroy(entry.Shadow);
             TryDestroy(entry.LeftBracket);
@@ -920,28 +1051,22 @@ namespace InFalsusChartExt
             catch { }
         }
 
-        private static void DestroyMaterials(GameObject root)
+        private static void DestroyMaterials(
+            IReadOnlyList<Material> materials)
         {
-            if (root == null || root.Pointer == IntPtr.Zero)
-                return;
-            try
+            for (int i = 0; i < materials.Count; i++)
             {
-                var renderers =
-                    root.GetComponentsInChildren<MeshRenderer>(
-                        true);
-                for (int i = 0;
-                     renderers != null &&
-                     i < renderers.Length;
-                     i++)
+                Material material = materials[i];
+                try
                 {
-                    Material material =
-                        renderers[i]?.sharedMaterial;
                     if (material != null &&
                         material.Pointer != IntPtr.Zero)
                         UnityEngine.Object.Destroy(material);
                 }
+                catch
+                {
+                }
             }
-            catch { }
         }
 
         private static Vector3 ReadVector3(IntPtr address)
