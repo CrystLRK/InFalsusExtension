@@ -1,0 +1,30 @@
+# Visual Studio / MSBuild
+.vs/
+bin/
+obj/
+*.user
+*.suo
+
+# Local game and generated runtime files
+GameAssembly.dll
+global-metadata.dat
+CustomCharts/
+Mods/
+UserData/
+build/
+output/
+
+# Reverse-engineering and crash artifacts
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.log
+
+# Local documentation and tests
+internal-docs/
+tests/
+test/
+testdata/
