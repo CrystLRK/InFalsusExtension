@@ -4,8 +4,13 @@ using HarmonyLib;
 using InFalsusChartExt.CustomSong.Discovery;
 using InFalsusChartExt.CustomSong.Install;
 using InFalsusChartExt.CustomSong.Lifecycle;
+#if MELONLOADER
 using Il2Cpp_k;
 using Il2Cpp_n;
+#elif BEPINEX
+using _k;
+using _n;
+#endif
 
 namespace InFalsusChartExt.CustomSong.Chart
 {

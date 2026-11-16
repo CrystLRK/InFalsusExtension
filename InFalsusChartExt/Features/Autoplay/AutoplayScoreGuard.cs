@@ -11,6 +11,7 @@ namespace InFalsusChartExt
     {
         private static bool _usedThisChart;
         private static bool _freezeActive;
+        private static bool _resultSuppression;
         private static bool _showResultMarker;
         private static bool _guardUnavailable;
         private static float _guardWarningUntil;
@@ -24,8 +25,11 @@ namespace InFalsusChartExt
             _freezeActive;
 
         internal static bool ShouldSuppressResults =>
-            _usedThisChart &&
+            (_usedThisChart || _resultSuppression) &&
             SuppressScores;
+
+        internal static bool ResultScreenSuppression =>
+            _resultSuppression && SuppressScores;
 
         /// <summary>
         /// Clears an unfinished previous run when a new gameplay chart starts.
@@ -49,6 +53,7 @@ namespace InFalsusChartExt
             }
             _usedThisChart = false;
             _freezeActive = false;
+            _resultSuppression = false;
             _showResultMarker = false;
         }
 
@@ -83,11 +88,7 @@ namespace InFalsusChartExt
                         "native results detour could not be installed");
                     return false;
                 }
-                _usedThisChart = true;
-                _freezeActive = true;
                 _guardUnavailable = false;
-                ChartExtMod.Log.Msg(
-                    "[ChartExt] autoplay score suppression latched");
                 return true;
             }
             catch (Exception exception)
@@ -98,10 +99,28 @@ namespace InFalsusChartExt
             }
         }
 
+        /// <summary>
+        /// Only an actual simulated note or SkyArea contact marks the run as
+        /// an Autoplay run. Opening the switch alone must not freeze scores.
+        /// </summary>
+        internal static void MarkUsed()
+        {
+            if (_usedThisChart)
+                return;
+            if (!SuppressScores)
+                return;
+            _usedThisChart = true;
+            _freezeActive = true;
+            ChartExtMod.Log.Msg(
+                "[ChartExt] autoplay score suppression latched " +
+                "after the first simulated input");
+        }
+
         internal static void CompleteResultsStart()
         {
             if (_usedThisChart && SuppressScores)
             {
+                _resultSuppression = true;
                 _showResultMarker = true;
                 ChartExtMod.Log.Msg(
                     "[ChartExt] autoplay result marker enabled");
@@ -110,9 +129,16 @@ namespace InFalsusChartExt
             _usedThisChart = false;
         }
 
+        internal static void BeginResultsStart()
+        {
+            if (_usedThisChart && SuppressScores)
+                _resultSuppression = true;
+        }
+
         internal static void OnSceneUnloaded()
         {
             _showResultMarker = false;
+            _resultSuppression = false;
         }
 
         internal static void OnGUI()

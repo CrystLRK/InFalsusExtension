@@ -1,6 +1,11 @@
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+#if MELONLOADER
 using Il2Cppifapp.Game;
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game;
+using ifapp.Game.Data;
+#endif
 
 namespace InFalsusChartExt.CustomSong.Install
 {

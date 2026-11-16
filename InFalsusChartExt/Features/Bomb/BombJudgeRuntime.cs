@@ -271,12 +271,12 @@ namespace InFalsusChartExt
                 ? ChartExtState.JudgeMiss
                 : ChartExtState.JudgeShiny;
             long globalIndex = *(long*)record;
-            int recordStart = Marshal.ReadInt32(
-                note + NativeLayoutCatalog.Note.RecordStart);
-            int recordEnd = Marshal.ReadInt32(
-                note + NativeLayoutCatalog.Note.RecordEnd);
-            int recordCount = recordEnd - recordStart + 1;
-            if (recordStart < 0 || recordCount <= 0)
+            int laneFirst = Marshal.ReadInt32(
+                note + NativeLayoutCatalog.Note.LaneFirst);
+            int laneLast = Marshal.ReadInt32(
+                note + NativeLayoutCatalog.Note.LaneLast);
+            int laneCount = laneLast - laneFirst + 1;
+            if (laneFirst < 0 || laneCount <= 0)
                 return;
             byte oldJudgment = record[InteropUtil.JudgmentOffset];
             byte oldFinal = record[InteropUtil.FinalOffset];
@@ -284,13 +284,13 @@ namespace InFalsusChartExt
             record[InteropUtil.FinalOffset] = 1;
 
             float presentationProgress =
-                (recordStart + recordEnd) * 0.5f / 5f;
+                (laneFirst + laneLast) * 0.5f / 5f;
             Vector3 position =
                 track._dBA(presentationProgress);
             if (!EnqueuePresentation(
                     bomb.NativeId,
-                    recordStart,
-                    recordCount,
+                    laneFirst,
+                    laneCount,
                     globalIndex,
                     position))
             {
@@ -346,9 +346,9 @@ namespace InFalsusChartExt
             int stateCount = Marshal.ReadInt32(
                 states + NativeLayoutCatalog.ArrayLengthOffset);
             int start = Marshal.ReadInt32(
-                note + NativeLayoutCatalog.Note.RecordStart);
+                note + NativeLayoutCatalog.Note.LaneFirst);
             int end = Marshal.ReadInt32(
-                note + NativeLayoutCatalog.Note.RecordEnd);
+                note + NativeLayoutCatalog.Note.LaneLast);
             if (start < 0 || end < start || end >= stateCount)
                 return false;
             IntPtr data =

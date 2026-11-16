@@ -98,8 +98,8 @@
     "RuntimeLead": 80,
     "Consumed": 112,
     "Flags": 116,
-    "RecordStart": 120,
-    "RecordEnd": 124
+    "LaneFirst": 120,
+    "LaneLast": 124
   },
   "Compiled": {
     "RecordDictionary": 56,
@@ -121,16 +121,20 @@
     "InputStates": 88,
     "RecordStates": 104,
     "InputStateStride": 24,
-    "InputHeld": 0,
-    "InputPressed": 1,
+    "InputHeld": 1,
+    "InputPressed": 0,
     "InputConsumed": 2,
     "InputPressedAt": 8,
+    "InputLastInput": 16,
     "RecordStateContinuation": 1,
     "CursorX": 152,
+    "CursorRaw": 16,
     "ChartTime": 208,
     "WarningTime": 24,
     "PenaltyTime": 32,
+    "InWindow": 80,
     "SpaceCovered": 81,
+    "StartOk": 82,
     "PendingPresentation": 96
   },
   "GameSceneAudio": {

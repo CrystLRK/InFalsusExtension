@@ -2,7 +2,11 @@
 using System;
 using System.Collections.Generic;
 using HarmonyLib;
+#if MELONLOADER
 using Il2Cppifapp.Game.Scenes.Game;
+#elif BEPINEX
+using ifapp.Game.Scenes.Game;
+#endif
 
 namespace InFalsusChartExt
 {

@@ -14,6 +14,10 @@ namespace InFalsusChartExt
         private static MethodBase TargetMethod() =>
             NativePatchTargetResolver.ResolveHarmony("judgeOz");
 
+        [HarmonyPrefix]
+        private static void Prefix() =>
+            AutoplayRuntime.ApplyInputs(true);
+
         [HarmonyPostfix]
         private static void Postfix() => AutoplayRuntime.ApplyOutcomes();
     }

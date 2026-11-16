@@ -60,8 +60,8 @@ namespace InFalsusChartExt
             internal static readonly int RuntimeLead = Abi("Note", "RuntimeLead");
             internal static readonly int Consumed = Abi("Note", "Consumed");
             internal static readonly int Flags = Abi("Note", "Flags");
-            internal static readonly int RecordStart = Abi("Note", "RecordStart");
-            internal static readonly int RecordEnd = Abi("Note", "RecordEnd");
+            internal static readonly int LaneFirst = Abi("Note", "LaneFirst");
+            internal static readonly int LaneLast = Abi("Note", "LaneLast");
         }
 
         internal static class Compiled
@@ -95,15 +95,20 @@ namespace InFalsusChartExt
             internal static readonly int InputPressed = Abi("SkyJudge", "InputPressed");
             internal static readonly int InputConsumed = Abi("SkyJudge", "InputConsumed");
             internal static readonly int InputPressedAt = Abi("SkyJudge", "InputPressedAt");
+            internal static readonly int InputLastInput = Abi("SkyJudge", "InputLastInput");
             internal static readonly int RecordStateContinuation = Abi("SkyJudge", "RecordStateContinuation");
             // Current horizontal position of the native sky cursor.
             internal static readonly int CursorX = Abi("SkyJudge", "CursorX");
+            // _VD._oEA raw pointer/cursor before clamping.
+            internal static readonly int CursorRaw = Abi("SkyJudge", "CursorRaw");
             // Backing field for _VD._c, the chart clock in seconds.
             internal static readonly int ChartTime = Abi("SkyJudge", "ChartTime");
             // _VD._OEA sky coverage protection and current space-covered state.
             internal static readonly int WarningTime = Abi("SkyJudge", "WarningTime");
             internal static readonly int PenaltyTime = Abi("SkyJudge", "PenaltyTime");
+            internal static readonly int InWindow = Abi("SkyJudge", "InWindow");
             internal static readonly int SpaceCovered = Abi("SkyJudge", "SpaceCovered");
+            internal static readonly int StartOk = Abi("SkyJudge", "StartOk");
             // Queue<ValueTuple<long,int,int,long,Vector3>> filled by _Oz
             // and consumed by _Tz before GameScene._Mk.
             internal static readonly int PendingPresentation = Abi("SkyJudge", "PendingPresentation");
@@ -325,8 +330,8 @@ namespace InFalsusChartExt
                 ok &= Field(noteClass, "_Ee", boxed + Note.RuntimeLead, "_fA._Ee", failures);
                 ok &= Field(noteClass, "_Ge", boxed + Note.Consumed, "_fA._Ge", failures);
                 ok &= Field(noteClass, "_he", boxed + Note.Flags, "_fA._he", failures);
-                ok &= Field(noteClass, "_He", boxed + Note.RecordStart, "_fA._He", failures);
-                ok &= Field(noteClass, "_ie", boxed + Note.RecordEnd, "_fA._ie", failures);
+                ok &= Field(noteClass, "_He", boxed + Note.LaneFirst, "_fA._He", failures);
+                ok &= Field(noteClass, "_ie", boxed + Note.LaneLast, "_fA._ie", failures);
                 ok &= ValueSize(noteClass, NoteStride, "_fA", failures);
 
                 IntPtr sideClass = OpenClass<Il2Cpp_b._hA>();
@@ -421,10 +426,10 @@ namespace InFalsusChartExt
                 ok &= Field(colorClass, "EdgeGlowColorRed", SafeAreaColorDetails.EdgeGlowRed, "SafeAreaColorDetails.EdgeGlowRed", failures);
                 ok &= Field(colorClass, "FrontBackRed", SafeAreaColorDetails.FrontBackRed, "SafeAreaColorDetails.FrontBackRed", failures);
 
-                IntPtr backgroundClass = OpenClass<Il2Cpp.GenericGameplayBackground>();
+                IntPtr backgroundClass = OpenClass<IFCEGenericGameplayBackground>();
                 ok &= Field(backgroundClass, "outputQuad", Background.OutputQuad, "GenericGameplayBackground.outputQuad", failures);
 
-                IntPtr flickNoteClass = OpenClass<Il2Cpp.FlickNoteV3>();
+                IntPtr flickNoteClass = OpenClass<IFCEFlickNoteV3>();
                 ok &= Field(flickNoteClass, "backingMeshRenderer", FlickNote.BackingMeshRenderer, "FlickNoteV3.backingMeshRenderer", failures);
 
                 IntPtr tapNoteClass =

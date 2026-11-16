@@ -159,6 +159,7 @@ namespace InFalsusChartExt
             };
 
         private static bool _attempted;
+        private static string _attemptedRoot;
         private static string _error;
 
         internal static NativeAbiProfile Selected { get; private set; }
@@ -168,11 +169,8 @@ namespace InFalsusChartExt
         {
             get
             {
-                string mods = Path.GetDirectoryName(
-                    typeof(ChartExtMod).Assembly.Location);
                 return Path.Combine(
-                    mods ?? Environment.CurrentDirectory,
-                    "InFalsusChartExt",
+                    PluginEnvironment.SharedDataDirectory,
                     "native-profiles.json");
             }
         }
@@ -181,12 +179,23 @@ namespace InFalsusChartExt
             string gameHash,
             string metadataHash)
         {
-            if (_attempted)
+            string gameRoot = PluginEnvironment.GameRoot;
+            if (_attempted &&
+                (Selected is not null ||
+                 string.Equals(
+                     _attemptedRoot,
+                     gameRoot,
+                     StringComparison.OrdinalIgnoreCase)))
+            {
                 return Selected;
+            }
             _attempted = true;
+            _attemptedRoot = gameRoot;
             try
             {
                 string entryPath = EntryPath;
+                ChartExtMod.Log?.Msg(
+                    "[BuildProfile] native profile entry: " + entryPath);
                 if (!File.Exists(entryPath))
                 {
                     _error =
@@ -203,7 +212,7 @@ namespace InFalsusChartExt
                         "native profile entry schema is invalid");
                 }
 
-                string root = Path.GetDirectoryName(entryPath);
+                string root = Path.GetDirectoryName(entryPath) ?? gameRoot;
                 foreach (ProfileReference reference in entry.Profiles)
                 {
                     if (!HashEquals(

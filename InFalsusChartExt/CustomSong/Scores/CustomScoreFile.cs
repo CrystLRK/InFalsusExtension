@@ -219,11 +219,8 @@ namespace InFalsusChartExt.CustomSong.Scores
 
         private static string ResolvePath()
         {
-            string modDirectory = System.IO.Path.GetDirectoryName(
-                typeof(ChartExtMod).Assembly.Location);
             return System.IO.Path.Combine(
-                modDirectory ?? Environment.CurrentDirectory,
-                "InFalsusChartExt",
+                PluginEnvironment.PluginDataDirectory,
                 "custom-results.json");
         }
     }

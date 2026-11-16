@@ -3,36 +3,24 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using InFalsusChartExt.CustomSong.Config;
+#if MELONLOADER
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game.Data;
+#endif
 
 namespace InFalsusChartExt.CustomSong.Discovery
 {
     internal static class CustomLibraryDiscovery
     {
-        private static readonly JsonSerializerOptions JsonOptions =
-            new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                ReadCommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true,
-            };
-
-        private static readonly Dictionary<string, ChartDifficultyFlag>
-            DifficultyByName =
-                new Dictionary<string, ChartDifficultyFlag>(
-                    StringComparer.OrdinalIgnoreCase)
-                {
-                    ["MIN"] = ChartDifficultyFlag.Minimal,
-                    ["MINIMAL"] = ChartDifficultyFlag.Minimal,
-                    ["EVO"] = ChartDifficultyFlag.Evolved,
-                    ["EVOLVED"] = ChartDifficultyFlag.Evolved,
-                    ["ULT"] = ChartDifficultyFlag.Ultimate,
-                    ["ULTIMATE"] = ChartDifficultyFlag.Ultimate,
-                    ["FBD"] = ChartDifficultyFlag.Forbidden,
-                    ["FORBIDDEN"] = ChartDifficultyFlag.Forbidden,
-                };
+        private static readonly ChartDifficultyFlag[] SlotDifficulties =
+        {
+            ChartDifficultyFlag.Minimal,
+            ChartDifficultyFlag.Evolved,
+            ChartDifficultyFlag.Ultimate,
+            ChartDifficultyFlag.Forbidden,
+        };
 
         internal static CustomLibraryPlan Scan(out string report)
             => Scan(CustomSongPaths.ChartsRoot, out report);
@@ -47,43 +35,51 @@ namespace InFalsusChartExt.CustomSong.Discovery
                 StringComparer.OrdinalIgnoreCase);
             var songIds = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
-            var parserKeys = new HashSet<string>(
-                StringComparer.OrdinalIgnoreCase);
             var baseNames = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
 
             if (!Directory.Exists(root))
             {
-                report = "CustomCharts directory not found: " + root;
+                report = "Charts directory not found: " + root;
                 return new CustomLibraryPlan(packs);
             }
 
+            int order = 0;
             foreach (string directory in Directory
                          .EnumerateDirectories(root)
                          .OrderBy(
                              path => path,
                              StringComparer.OrdinalIgnoreCase))
             {
+                string name = Path.GetFileName(directory);
+                if (name.StartsWith(
+                        ".",
+                        StringComparison.Ordinal))
+                    continue;
+                if (!File.Exists(Path.Combine(
+                        directory,
+                        IfConfigReader.PackFileName)))
+                {
+                    lines.Add(
+                        $"pack ignored '{name}': " +
+                        IfConfigReader.PackFileName + " is missing");
+                    continue;
+                }
+
                 try
                 {
-                    var candidatePackIds = new HashSet<string>(
-                        packIds, StringComparer.OrdinalIgnoreCase);
-                    var candidateSongIds = new HashSet<string>(
-                        songIds, StringComparer.OrdinalIgnoreCase);
-                    var candidateParserKeys = new HashSet<string>(
-                        parserKeys, StringComparer.OrdinalIgnoreCase);
-                    var candidateBaseNames = new HashSet<string>(
-                        baseNames, StringComparer.OrdinalIgnoreCase);
                     CustomPackPlan pack = ScanPack(
                         directory,
-                        candidatePackIds,
-                        candidateSongIds,
-                        candidateParserKeys,
-                        candidateBaseNames);
-                    packIds = candidatePackIds;
-                    songIds = candidateSongIds;
-                    parserKeys = candidateParserKeys;
-                    baseNames = candidateBaseNames;
+                        order++,
+                        songIds,
+                        baseNames);
+                    if (!packIds.Add(pack.Config.Id))
+                    {
+                        lines.Add(
+                            $"pack rejected '{name}': duplicate pack id " +
+                            $"'{pack.Config.Id}'");
+                        continue;
+                    }
                     packs.Add(pack);
                     lines.Add(
                         $"pack '{pack.Config.Id}': " +
@@ -92,7 +88,7 @@ namespace InFalsusChartExt.CustomSong.Discovery
                 catch (Exception exception)
                 {
                     lines.Add(
-                        $"pack rejected '{Path.GetFileName(directory)}': " +
+                        $"pack rejected '{name}': " +
                         exception.Message);
                 }
             }
@@ -122,271 +118,213 @@ namespace InFalsusChartExt.CustomSong.Discovery
 
         private static CustomPackPlan ScanPack(
             string directory,
-            HashSet<string> packIds,
+            int defaultOrder,
             HashSet<string> songIds,
-            HashSet<string> parserKeys,
             HashSet<string> baseNames)
         {
-            PackConfig config = ReadJson<PackConfig>(
-                Path.Combine(directory, "pack_config.json"),
-                "pack_config.json");
-            ValidatePackConfig(config);
-            if (!packIds.Add(config.Id))
-                throw new InvalidDataException(
-                    $"duplicate pack id '{config.Id}'");
-
-            string jacket = Path.Combine(directory, "pack_jacket.png");
-            if (!File.Exists(jacket))
-                jacket = null;
+            if (!IfConfigReader.TryReadPack(
+                    directory,
+                    defaultOrder,
+                    out PackJsonDocument pack,
+                    out string packError))
+            {
+                throw new InvalidDataException(packError);
+            }
 
             var songs = new List<CustomSongPlan>();
+            var lines = new List<string>();
             foreach (string songDirectory in Directory
                          .EnumerateDirectories(directory)
                          .OrderBy(
                              path => path,
                              StringComparer.OrdinalIgnoreCase))
             {
-                songs.Add(ScanSong(
-                    songDirectory,
-                    songIds,
-                    parserKeys,
-                    baseNames));
+                string name = Path.GetFileName(songDirectory);
+                if (name.StartsWith(
+                        ".",
+                        StringComparison.Ordinal))
+                    continue;
+                try
+                {
+                    songs.Add(ScanSong(
+                        songDirectory,
+                        songIds,
+                        baseNames));
+                }
+                catch (Exception exception)
+                {
+                    lines.Add(
+                        $"song ignored '{name}': " +
+                        exception.Message);
+                    ChartExtMod.Log.Warning(
+                        $"[CustomSong] song '{name}' in pack " +
+                        $"'{pack.Id}' was ignored: {exception.Message}");
+                }
             }
 
             if (songs.Count == 0)
+            {
                 throw new InvalidDataException(
-                    "pack contains no valid song directories");
+                    "pack contains no valid song directories" +
+                    (lines.Count > 0
+                        ? " (" + string.Join("; ", lines) + ")"
+                        : string.Empty));
+            }
 
-            var pack = new CustomPackPlan(
-                directory, config, jacket, songs);
+            var config = new PackConfig
+            {
+                SchemaVersion = 1,
+                Id = pack.Id,
+                Title = CustomSongSchema.Language(pack.Titles, 0),
+                Artist = pack.Artist ?? string.Empty,
+                Description = pack.Description ?? string.Empty,
+                StylePackSlug = string.IsNullOrWhiteSpace(
+                    pack.StylePackSlug)
+                    ? "act-4"
+                    : pack.StylePackSlug,
+                SortOrder = pack.SortOrder,
+            };
+
+            var result = new CustomPackPlan(
+                directory,
+                config,
+                pack.Titles,
+                pack.Visuals,
+                songs);
             for (int i = 0; i < songs.Count; i++)
-                songs[i].Pack = pack;
-            return pack;
+                songs[i].Pack = result;
+            return result;
         }
 
         private static CustomSongPlan ScanSong(
             string directory,
             HashSet<string> songIds,
-            HashSet<string> parserKeys,
             HashSet<string> baseNames)
         {
-            SongConfig config = ReadJson<SongConfig>(
-                Path.Combine(directory, "config.json"),
-                "song config.json");
-            ValidateSongConfig(config);
-            if (!songIds.Add(config.Id))
-                throw new InvalidDataException(
-                    $"duplicate song id '{config.Id}'");
-
-            string audio = ResolveRequired(
-                directory,
-                config.Audio,
-                null,
-                "audio");
-            ValidateAudioSource(audio, "audio");
-
-            string preview = audio;
-            float previewStart = config.PreviewStart ?? 0f;
-            float previewEnd = config.PreviewEnd ?? previewStart;
-            if (config.Preview is not null)
+            if (!IfConfigReader.TryReadSong(
+                    directory,
+                    out IfSongDocument song,
+                    out string error))
             {
-                if (!string.IsNullOrWhiteSpace(config.Preview.Audio))
-                {
-                    preview = ResolveRequired(
-                        directory,
-                        config.Preview.Audio,
-                        null,
-                        "preview.audio");
-                    ValidateAudioSource(preview, "preview.audio");
-                }
-                previewStart = config.Preview.Start ?? previewStart;
-                previewEnd = config.Preview.End ?? previewEnd;
+                throw new InvalidDataException(error);
             }
-            if (!float.IsFinite(previewStart) ||
-                !float.IsFinite(previewEnd) ||
-                previewEnd < previewStart)
+            if (!songIds.Add(song.Id))
             {
                 throw new InvalidDataException(
-                    "preview time range is invalid");
+                    $"duplicate song id '{song.Id}'");
             }
 
-            string background = ResolveOptional(
-                directory,
-                config.Background,
-                CustomSongPaths.IsBackgroundPathValid,
-                "background");
-            string jacketLarge = ResolveOptional(
-                directory,
-                config.JacketLarge,
-                CustomSongPaths.IsJacketPathValid,
-                "jacketLarge");
-            string jacketSmall = ResolveOptional(
-                directory,
-                config.JacketSmall,
-                CustomSongPaths.IsJacketPathValid,
-                "jacketSmall");
-
-            string baseName = BuildBaseName(config.Id);
+            string baseName = BuildBaseName(song.Id);
             if (!baseNames.Add(baseName))
             {
                 throw new InvalidDataException(
-                    $"song id '{config.Id}' produces duplicate " +
+                    $"song id '{song.Id}' produces duplicate " +
                     $"base name '{baseName}'");
             }
+
+            ValidateAudio(song.AudioPaths, "audio");
+            ValidateAudio(song.PreviewPaths, "preview audio");
+
             var charts = new List<CustomChartPlan>();
-            foreach (KeyValuePair<string, DifficultyConfig> item
-                     in config.Difficulties)
+            for (int slot = 0;
+                 slot < CustomSongSchema.DifficultyCount;
+                 slot++)
             {
-                if (!DifficultyByName.TryGetValue(
-                        item.Key,
-                        out ChartDifficultyFlag difficulty))
-                {
-                    throw new InvalidDataException(
-                        $"unknown difficulty '{item.Key}'");
-                }
-                if (item.Value is null ||
-                    string.IsNullOrWhiteSpace(item.Value.Chart))
-                {
-                    throw new InvalidDataException(
-                        $"difficulty '{item.Key}' has no chart");
-                }
+                string chartPath = song.ChartPaths[slot];
+                if (string.IsNullOrWhiteSpace(chartPath))
+                    continue;
 
-                string chartPath = ResolveRequired(
-                    directory,
-                    item.Value.Chart,
-                    CustomSongPaths.IsChartPathValid,
-                    "difficulty " + item.Key);
                 string parserKey =
-                    Path.GetFileNameWithoutExtension(chartPath) + ".spc";
-                if (!parserKeys.Add(parserKey))
-                {
-                    throw new InvalidDataException(
-                        $"duplicate chart parser key '{parserKey}'");
-                }
+                    Path.GetFileNameWithoutExtension(chartPath) +
+                    ".spc";
+                int rating = song.Ratings[slot];
+                if (rating < 0)
+                    rating = 0;
 
-                int slot = DifficultySlot(difficulty);
-                string difficultyBackground = ResolveOptional(
-                    directory,
-                    item.Value.Background,
-                    CustomSongPaths.IsBackgroundPathValid,
-                    "difficulty " + item.Key + " background");
-                charts.Add(new CustomChartPlan(
+                var plan = new CustomChartPlan(
                     baseName + slot,
                     parserKey,
                     chartPath,
-                    difficultyBackground ?? background,
-                    difficulty,
-                    item.Value.Rating,
-                    string.IsNullOrWhiteSpace(
-                        item.Value.LevelSectionIndicator)
-                        ? "?"
-                        : item.Value.LevelSectionIndicator.Trim()));
+                    song.BackgroundPaths?[slot],
+                    SlotDifficulties[slot],
+                    slot,
+                    rating,
+                    song.LevelSections?[slot] ?? "?",
+                    song.ChartDesigners?[slot],
+                    song.JacketDesigners?[slot],
+                    song.JacketLargePaths?[slot],
+                    song.JacketSmallPaths?[slot]);
+                charts.Add(plan);
             }
 
             charts.Sort(
                 (left, right) =>
-                    DifficultySlot(left.Difficulty).CompareTo(
-                        DifficultySlot(right.Difficulty)));
+                    left.Slot.CompareTo(right.Slot));
             if (charts.Count == 0)
                 throw new InvalidDataException(
                     "song contains no available difficulty");
 
-            return new CustomSongPlan(
+            var config = new SongConfig
+            {
+                SchemaVersion = 1,
+                Id = song.Id,
+                Title = CustomSongSchema.Language(song.Titles, 0),
+                Artist = CustomSongSchema.Language(
+                    song.Composers, 0),
+                ChartDesigner = charts[0].ChartDesigner(0),
+                JacketDesigner =
+                    CustomSongSchema.Language(song.Illustrators, 0),
+                Audio = song.AudioPaths[0],
+                PreviewStart = song.PreviewStarts[0],
+                PreviewEnd = song.PreviewEnds[0],
+                Background = song.BackgroundPaths?[0],
+                JacketLarge = song.JacketLargePaths?[0],
+                JacketSmall = song.JacketSmallPaths?[0],
+            };
+
+            var result = new CustomSongPlan(
                 directory,
                 config,
                 baseName,
-                audio,
-                preview,
-                previewStart,
-                previewEnd,
-                background,
-                jacketLarge,
-                jacketSmall,
+                song.Titles,
+                song.Composers,
+                song.Illustrators,
+                song.AudioPaths,
+                song.PreviewPaths,
+                song.PreviewStarts,
+                song.PreviewEnds,
+                song.BackgroundPaths,
+                song.JacketLargePaths,
+                song.JacketSmallPaths,
                 charts);
+            foreach (CustomChartPlan chart in charts)
+                chart.Song = result;
+            return result;
         }
 
-        private static T ReadJson<T>(string path, string label)
-            where T : class
-        {
-            if (!File.Exists(path))
-                throw new FileNotFoundException(
-                    label + " was not found", path);
-            try
-            {
-                byte[] bytes = File.ReadAllBytes(path);
-                T value = JsonSerializer.Deserialize<T>(
-                    new ReadOnlySpan<byte>(bytes), JsonOptions);
-                return value ?? throw new InvalidDataException(
-                    label + " is empty");
-            }
-            catch (JsonException exception)
-            {
-                throw new InvalidDataException(
-                    label + " is invalid JSON: " + exception.Message,
-                    exception);
-            }
-        }
-
-        private static void ValidatePackConfig(PackConfig config)
-        {
-            if (config.SchemaVersion != 1)
-                throw new InvalidDataException(
-                    "pack schemaVersion must be 1");
-            RequireText(config.Id, "pack id");
-            RequireText(config.Title, "pack title");
-        }
-
-        private static void ValidateSongConfig(SongConfig config)
-        {
-            if (config.SchemaVersion != 1)
-                throw new InvalidDataException(
-                    "song schemaVersion must be 1");
-            RequireText(config.Id, "song id");
-            RequireText(config.Title, "song title");
-            RequireText(config.Audio, "song audio");
-            if (config.Difficulties is null ||
-                config.Difficulties.Count == 0)
-                throw new InvalidDataException(
-                    "song difficulties are missing");
-        }
-
-        private static void RequireText(string value, string label)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                throw new InvalidDataException(label + " is required");
-        }
-
-        private static string ResolveRequired(
-            string root,
-            string configured,
-            Func<string, bool> extensionAllowed,
+        private static void ValidateAudio(
+            string[] paths,
             string label)
         {
-            if (!CustomSongPaths.TryResolveFile(
-                    root,
-                    configured,
-                    null,
-                    out string resolved,
-                    out string error))
+            if (paths is null)
+                return;
+            var seen = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < paths.Length; i++)
             {
-                throw new InvalidDataException(
-                    label + ": " + error);
+                string path = paths[i];
+                if (string.IsNullOrWhiteSpace(path) ||
+                    !seen.Add(path))
+                    continue;
+                ValidateAudioSource(path, label + "[" + i + "]");
             }
-            if (extensionAllowed is not null &&
-                !extensionAllowed(resolved))
-            {
-                throw new InvalidDataException(
-                    label + ": unsupported extension '" +
-                    Path.GetExtension(resolved) + "'");
-            }
-            return resolved;
         }
 
         private static void ValidateAudioSource(
             string path,
             string label)
         {
-            if (DetectAudioHeader(path, out string format))
+            if (DetectAudioHeader(path, out _))
                 return;
             if (CustomSongPaths.IsAudioPathValid(path))
                 return;
@@ -442,30 +380,6 @@ namespace InFalsusChartExt.CustomSong.Discovery
             format = null;
             return false;
         }
-
-        private static string ResolveOptional(
-            string root,
-            string configured,
-            Func<string, bool> extensionAllowed,
-            string label)
-        {
-            if (string.IsNullOrWhiteSpace(configured))
-                return null;
-            return ResolveRequired(
-                root, configured, extensionAllowed, label);
-        }
-
-        private static int DifficultySlot(
-            ChartDifficultyFlag difficulty) =>
-            difficulty switch
-            {
-                ChartDifficultyFlag.Minimal => 0,
-                ChartDifficultyFlag.Evolved => 1,
-                ChartDifficultyFlag.Ultimate => 2,
-                ChartDifficultyFlag.Forbidden => 3,
-                _ => throw new InvalidDataException(
-                    $"unsupported difficulty value {(byte)difficulty}"),
-            };
 
         private static string BuildBaseName(string id)
         {

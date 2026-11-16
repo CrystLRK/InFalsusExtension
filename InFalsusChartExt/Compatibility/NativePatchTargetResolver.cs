@@ -20,6 +20,11 @@ namespace InFalsusChartExt
             NativeCache =
             new Dictionary<string, Resolution>(
                 StringComparer.OrdinalIgnoreCase);
+#if BEPINEX
+        private static readonly HashSet<string>
+            TokenFallbackLogged =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+#endif
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         private static extern IntPtr GetModuleHandle(string name);
@@ -231,21 +236,42 @@ namespace InFalsusChartExt
                 BindingFlags.DeclaredOnly;
             if (target.ManagedMetadataToken != 0)
             {
-                MethodBase tokenMethod =
-                    managedType.Module.ResolveMethod(
-                        target.ManagedMetadataToken)
-                    ?? throw new MissingMethodException(
-                        managedType.FullName,
-                        "managed metadata token did not resolve");
-                if (tokenMethod.DeclaringType != managedType ||
-                    !MethodMatchesProfile(tokenMethod, target))
+                try
                 {
-                    throw new MissingMethodException(
-                        managedType.FullName,
-                        "managed metadata token/signature mismatch");
+                    MethodBase tokenMethod =
+                        managedType.Module.ResolveMethod(
+                            target.ManagedMetadataToken)
+                        ?? throw new MissingMethodException(
+                            managedType.FullName,
+                            "managed metadata token did not resolve");
+                    if (tokenMethod.DeclaringType != managedType ||
+                        !MethodMatchesProfile(tokenMethod, target))
+                    {
+                        throw new MissingMethodException(
+                            managedType.FullName,
+                            "managed metadata token/signature mismatch");
+                    }
+                    return CloseGenericMethod(
+                        tokenMethod, target);
                 }
-                return CloseGenericMethod(
-                    tokenMethod, target);
+                catch (Exception exception)
+                {
+#if BEPINEX
+                    if (PluginEnvironment.Loader !=
+                            PluginLoaderKind.BepInEx)
+                        throw;
+                    if (TokenFallbackLogged.Add(target.Key))
+                    {
+                        ChartExtMod.Log.Warning(
+                            "[BepInEx] managed metadata token differs " +
+                            $"for {target.Key}; falling back to signature " +
+                            $"match ({exception.Message})");
+                    }
+#else
+                    _ = exception;
+                    throw;
+#endif
+                }
             }
 
             IEnumerable<MethodBase> methods =
@@ -527,7 +553,7 @@ namespace InFalsusChartExt
                     : typeof(void);
             if (!string.Equals(
                     NativeTypeName.Normalize(returnType),
-                    target.ReturnType,
+                    NormalizeProfileTypeName(target.ReturnType),
                     StringComparison.Ordinal))
             {
                 return false;
@@ -537,7 +563,8 @@ namespace InFalsusChartExt
                 if (!string.Equals(
                         NativeTypeName.Normalize(
                             parameters[i].ParameterType),
-                        target.ParameterTypes[i],
+                        NormalizeProfileTypeName(
+                            target.ParameterTypes[i]),
                         StringComparison.Ordinal))
                 {
                     return false;
@@ -562,16 +589,41 @@ namespace InFalsusChartExt
                     IL2CPP.il2cpp_image_get_name(image));
             return string.Equals(
                        name,
-                       target.Class,
+                       NormalizeProfileTypeName(target.Class),
                        StringComparison.Ordinal) &&
                    string.Equals(
                        namespaceName ?? string.Empty,
-                       target.Namespace,
+                       NormalizeProfileTypeName(target.Namespace),
                        StringComparison.Ordinal) &&
                    string.Equals(
                        NormalizeAssemblyName(assemblyName),
                        NormalizeAssemblyName(target.Assembly),
                        StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeProfileTypeName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return name;
+#if BEPINEX
+            if (PluginEnvironment.Loader !=
+                PluginLoaderKind.BepInEx)
+                return name;
+            return name
+                .Replace("Il2Cppifapp", "ifapp")
+                .Replace("Il2Cpp_k", "_k")
+                .Replace("Il2Cpp_n", "_n")
+                .Replace("Il2Cpp_J", "_J")
+                .Replace("Il2Cpp_b", "_b")
+                .Replace("Il2Cpp_E", "_E")
+                .Replace("Il2Cpp_K", "_K")
+                .Replace("Il2CppStr", "Str")
+                .Replace("Il2CppFastText", "FastText")
+                .Replace("Il2CppFMOD", "FMOD")
+                .Replace("Il2Cpp.", string.Empty);
+#else
+            return name;
+#endif
         }
 
         private static string NormalizeAssemblyName(string value)
@@ -589,6 +641,7 @@ namespace InFalsusChartExt
         {
             if (string.IsNullOrWhiteSpace(name))
                 return null;
+            name = NormalizeProfileTypeName(name);
             foreach (Assembly assembly in
                      AppDomain.CurrentDomain.GetAssemblies())
             {

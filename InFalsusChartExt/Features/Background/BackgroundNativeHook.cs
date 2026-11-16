@@ -21,8 +21,8 @@ namespace InFalsusChartExt
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate IntPtr LiaFn(IntPtr owner, IntPtr reference, IntPtr methodInfo);
 
-        private static NativeHook<UmaFn> _umaHook;
-        private static NativeHook<LiaFn> _liaHook;
+        private static NativeDetourHook<UmaFn> _umaHook;
+        private static NativeDetourHook<LiaFn> _liaHook;
         private static UmaFn _umaTrampoline;
         private static LiaFn _liaTrampoline;
         private static readonly UmaFn _umaDetourDelegate = UmaDetour;
@@ -50,17 +50,17 @@ namespace InFalsusChartExt
                         $"native background methods missing (Uma=0x{umaTarget.ToInt64():X}, " +
                         $"Lia=0x{liaTarget.ToInt64():X})");
 
-                _umaHook = new NativeHook<UmaFn>();
+                _umaHook = new NativeDetourHook<UmaFn>();
                 _umaHook.Target = umaTarget;
-                _umaHook.Detour = Marshal.GetFunctionPointerForDelegate(_umaDetourDelegate);
+                _umaHook.DetourDelegate = _umaDetourDelegate;
                 _umaHook.Attach();
                 if (!_umaHook.IsHooked)
                     throw new InvalidOperationException("GameplayBackgrounds._UmA native hook failed");
                 _umaTrampoline = _umaHook.Trampoline;
 
-                _liaHook = new NativeHook<LiaFn>();
+                _liaHook = new NativeDetourHook<LiaFn>();
                 _liaHook.Target = liaTarget;
-                _liaHook.Detour = Marshal.GetFunctionPointerForDelegate(_liaDetourDelegate);
+                _liaHook.DetourDelegate = _liaDetourDelegate;
                 _liaHook.Attach();
                 if (!_liaHook.IsHooked)
                     throw new InvalidOperationException(
@@ -182,30 +182,5 @@ namespace InFalsusChartExt
             }
         }
 
-        private sealed class NativeHook<T> where T : Delegate
-        {
-            private readonly MelonLoader.NativeUtils.NativeHook<T> _hook = new();
-
-            public IntPtr Target
-            {
-                set => _hook.Target = value;
-            }
-
-            public IntPtr Detour
-            {
-                set => _hook.Detour = value;
-            }
-
-            public T Trampoline => _hook.Trampoline;
-
-            public bool IsHooked => _hook.IsHooked;
-
-            public void Attach() => _hook.Attach();
-
-            public void Detach()
-            {
-                if (_hook.IsHooked) _hook.Detach();
-            }
-        }
     }
 }

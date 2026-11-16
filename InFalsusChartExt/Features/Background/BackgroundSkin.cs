@@ -3,7 +3,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using HarmonyLib;
 using InFalsusChartExt.CustomSong.Assets;
-using MelonLoader;
 using UnityEngine;
 
 namespace InFalsusChartExt
@@ -278,11 +277,11 @@ namespace InFalsusChartExt
                 // songs), but the component and its output quad are present.
                 try
                 {
-                    Il2Cpp.GenericGameplayBackground[] components =
-                        UnityEngine.Object.FindObjectsOfType<Il2Cpp.GenericGameplayBackground>();
+                    IFCEGenericGameplayBackground[] components =
+                        UnityEngine.Object.FindObjectsOfType<IFCEGenericGameplayBackground>();
                     if (components != null && components.Length > 0)
                     {
-                        Il2Cpp.GenericGameplayBackground component = components[0];
+                        IFCEGenericGameplayBackground component = components[0];
                         if (component != null && component.Pointer != IntPtr.Zero)
                         {
                             IntPtr quadPtr = Marshal.ReadIntPtr(
@@ -1013,7 +1012,7 @@ namespace InFalsusChartExt
                             .CustomChartPlan chart);
                 string backgroundPath =
                     chart?.BackgroundPath ??
-                    chart?.Song?.BackgroundPath;
+                    chart?.Song?.BackgroundFor(0);
                 if (!string.IsNullOrWhiteSpace(backgroundPath) &&
                     File.Exists(backgroundPath))
                 {

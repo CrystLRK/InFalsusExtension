@@ -6,10 +6,18 @@ using System.Runtime.InteropServices;
 using HarmonyLib;
 using InFalsusChartExt.CustomSong.Discovery;
 using InFalsusChartExt.CustomSong.Lifecycle;
+#if MELONLOADER
 using Il2Cpp_J;
+#elif BEPINEX
+using _J;
+#endif
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
+#if MELONLOADER
 using Il2CppFMOD;
+#elif BEPINEX
+using FMOD;
+#endif
 
 namespace InFalsusChartExt.CustomSong.Audio
 {
@@ -305,8 +313,10 @@ namespace InFalsusChartExt.CustomSong.Audio
             };
 
             string path = pending.Selection
-                ? pending.Song.PreviewPath
-                : pending.Song.AudioPath;
+                ? pending.Song.PreviewFor(
+                    DifficultySlot(pending.Song))
+                : pending.Song.AudioFor(
+                    DifficultySlot(pending.Song));
             if (string.IsNullOrWhiteSpace(path) ||
                 !File.Exists(path))
             {
@@ -475,10 +485,11 @@ namespace InFalsusChartExt.CustomSong.Audio
         {
             if (pending.Selection)
             {
+                int slot = DifficultySlot(pending.Song);
                 uint start = ToMilliseconds(
-                    pending.Song.PreviewStart);
+                    pending.Song.PreviewStartFor(slot));
                 uint end = ToMilliseconds(
-                    pending.Song.PreviewEnd);
+                    pending.Song.PreviewEndFor(slot));
                 Require(
                     FmodExports.SetMode(
                         channel.handle,
@@ -900,6 +911,19 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static bool ShouldDeferNativeRelease()
         {
             return _shutdownRequested;
+        }
+
+        private static int DifficultySlot(CustomSongPlan song)
+        {
+            if (SongSelectionState.HasSelection &&
+                SongSelectionState.SongId ==
+                song.RuntimeSongId)
+                return SongSelectionState.DifficultySlot;
+            CustomChartPlan chart = CustomSongRuntime.ActiveChart;
+            if (chart is not null &&
+                ReferenceEquals(chart.Song, song))
+                return chart.Slot;
+            return 0;
         }
 
         private static uint ToMilliseconds(double seconds) =>

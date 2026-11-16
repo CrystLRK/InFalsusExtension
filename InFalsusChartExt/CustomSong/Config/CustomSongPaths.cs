@@ -19,7 +19,7 @@ namespace InFalsusChartExt.CustomSong.Config
 
         private static readonly HashSet<string> JacketExtensions =
             new HashSet<string>(
-                new[] { ".png" },
+                new[] { ".png", ".jpg", ".jpeg" },
                 StringComparer.OrdinalIgnoreCase);
 
         private static readonly HashSet<string> ChartExtensions =
@@ -31,14 +31,22 @@ namespace InFalsusChartExt.CustomSong.Config
         {
             get
             {
-                string mods = Path.GetDirectoryName(
-                    typeof(ChartExtMod).Assembly.Location);
-                return Path.GetFullPath(Path.Combine(mods, ".."));
+                return PluginEnvironment.GameRoot
+                    ?? Environment.CurrentDirectory;
             }
         }
 
         internal static string ChartsRoot =>
+            Path.Combine(GameRoot, "Charts");
+
+        internal static string LegacyChartsRoot =>
             Path.Combine(GameRoot, "CustomCharts");
+
+        internal static string LegacyArchiveRoot =>
+            Path.Combine(ChartsRoot, ".ifce-legacy");
+
+        internal static string MigrationMarkerPath =>
+            Path.Combine(ChartsRoot, ".ifce-migration.json");
 
         internal static bool TryResolveFile(
             string root,

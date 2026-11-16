@@ -3,7 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using InFalsusChartExt.CustomSong.Audio;
+#if MELONLOADER
 using Il2Cpp_J;
+#elif BEPINEX
+using _J;
+#endif
 
 namespace InFalsusChartExt
 {

@@ -1,7 +1,6 @@
 // Code organization: native note slot view. Runtime behavior is unchanged.
 using System;
 using System.Runtime.InteropServices;
-using MelonLoader;
 
 namespace InFalsusChartExt
 {

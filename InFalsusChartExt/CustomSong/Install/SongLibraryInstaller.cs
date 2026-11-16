@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using InFalsusChartExt.CustomSong.Assets;
 using InFalsusChartExt.CustomSong.Discovery;
@@ -8,9 +9,15 @@ using InFalsusChartExt.CustomSong.Scores;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+#if MELONLOADER
 using Il2Cppifapp.Game;
 using Il2Cppifapp.Game.Data;
 using Il2Cppifapp.Game.Scenes;
+#elif BEPINEX
+using ifapp.Game;
+using ifapp.Game.Data;
+using ifapp.Game.Scenes;
+#endif
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -23,6 +30,9 @@ namespace InFalsusChartExt.CustomSong.Install
         private static bool _attemptedThisPhase;
         private static float _nextRetryTime;
         private static int _failures;
+        private static readonly Dictionary<ushort, SongInfo>
+            InstalledSongInfo =
+                new Dictionary<ushort, SongInfo>();
         [ThreadStatic]
         private static bool _refreshingMetadata;
 
@@ -48,6 +58,9 @@ namespace InFalsusChartExt.CustomSong.Install
                 if (plan.Packs.Count == 0)
                 {
                     _installed = true;
+                    StartupLoadingScreen.MarkLibraryReady();
+                    StartupLoadingScreen.MarkJacketsReady();
+                    StartupLoadingScreen.SetStatus("READY");
                     ChartExtMod.Log.Msg(
                         "[CustomSong] installed empty custom library.");
                     return;
@@ -64,6 +77,8 @@ namespace InFalsusChartExt.CustomSong.Install
                 _installing = true;
                 try
                 {
+                    StartupLoadingScreen.SetStatus(
+                        "INSTALLING CUSTOM SONGS...");
                     Install(access, plan);
                 }
                 finally
@@ -72,10 +87,13 @@ namespace InFalsusChartExt.CustomSong.Install
                 }
                 _installed = true;
                 _failures = 0;
+                StartupLoadingScreen.SetStatus("READY");
             }
             catch (Exception exception)
             {
                 _failures++;
+                StartupLoadingScreen.SetStatus(
+                    "CUSTOM LIBRARY RETRY...");
                 ChartExtMod.Log.Error(
                     "[CustomSong] library install failed; retrying: " +
                     exception);
@@ -237,9 +255,13 @@ namespace InFalsusChartExt.CustomSong.Install
                     {
                         Value = song.RuntimeSongId,
                     };
+                    StartupLoadingScreen.SetStatus(
+                        "INSTALLING: " + song.Config.Id);
                     SongInfo songInfo = BuildSong(
                         templateSong, song);
                     installedSongs.Add(songInfo);
+                    InstalledSongInfo[song.RuntimeSongId] =
+                        songInfo;
                     assignments.Add((
                         pack,
                         song,
@@ -287,16 +309,21 @@ namespace InFalsusChartExt.CustomSong.Install
                 songData,
                 packData,
                 strings);
+            var installWatch = Stopwatch.StartNew();
             try
             {
                 songData.allSongInfo = nextSongs;
+                var jacketWatch = Stopwatch.StartNew();
                 AppendJackets(
                     songData,
                     templateSong,
                     installedSongs,
                     plan);
+                long jacketMs = jacketWatch.ElapsedMilliseconds;
                 packData.PackInfo = nextPacks;
+                var metadataWatch = Stopwatch.StartNew();
                 DisplayMetadataInstaller.Apply(strings, plan);
+                long metadataMs = metadataWatch.ElapsedMilliseconds;
 
                 SongDataNativeCache.Reset(songData);
                 strings.OnAfterDeserialize();
@@ -309,6 +336,12 @@ namespace InFalsusChartExt.CustomSong.Install
                 JacketMaterialService.RegisterLibrary(
                     songData, plan);
                 CustomSongRuntime.MarkInstalled(plan);
+                StartupLoadingScreen.MarkLibraryReady();
+                ChartExtMod.Log.Msg(
+                    $"[CustomSong] install timing: " +
+                    $"total={installWatch.ElapsedMilliseconds}ms, " +
+                    $"jackets={jacketMs}ms, " +
+                    $"metadata={metadataMs}ms");
             }
             catch
             {
@@ -397,8 +430,14 @@ namespace InFalsusChartExt.CustomSong.Install
                 Id = new SongId { Value = song.RuntimeSongId },
                 BaseName = song.BaseName,
                 CharacterIdentifier = template.CharacterIdentifier,
-                PreviewStartSeconds = song.PreviewStart,
-                PreviewEndSeconds = song.PreviewEnd,
+                PreviewStartSeconds = song.PreviewStartFor(
+                    song.Charts.Count > 0
+                        ? song.Charts[0].Slot
+                        : 0),
+                PreviewEndSeconds = song.PreviewEndFor(
+                    song.Charts.Count > 0
+                        ? song.Charts[0].Slot
+                        : 0),
                 LocalizationToTitleReadingOverride =
                     template.LocalizationToTitleReadingOverride,
                 ArtistReadingOverride = template.ArtistReadingOverride,
@@ -437,14 +476,12 @@ namespace InFalsusChartExt.CustomSong.Install
                     Id = chartPlan.LogicalChartKey,
                     Available = true,
                     Difficulty = chartPlan.Difficulty,
-                    DisplayChartDesigner =
-                        song.Config.ChartDesigner ??
-                        templateChart.DisplayChartDesigner ??
-                        string.Empty,
-                    DisplayJacketDesigner =
-                        song.Config.JacketDesigner ??
-                        templateChart.DisplayJacketDesigner ??
-                        string.Empty,
+                    DisplayChartDesigner = NonEmpty(
+                        chartPlan.ChartDesigner(0),
+                        templateChart.DisplayChartDesigner),
+                    DisplayJacketDesigner = NonEmpty(
+                        chartPlan.JacketDesigner(0),
+                        templateChart.DisplayJacketDesigner),
                     Rating = chartPlan.Rating,
                     LevelSectionIndicator =
                         chartPlan.LevelSectionIndicator,
@@ -453,6 +490,15 @@ namespace InFalsusChartExt.CustomSong.Install
             song.TemplateAudioName = template.BaseName;
             result.ChartInfos = charts;
             return result;
+        }
+
+        private static string NonEmpty(
+            string preferred,
+            string fallback)
+        {
+            if (!string.IsNullOrWhiteSpace(preferred))
+                return preferred;
+            return fallback ?? string.Empty;
         }
 
         private static SongChartInfo FindTemplateChart(
@@ -521,6 +567,11 @@ namespace InFalsusChartExt.CustomSong.Install
                 }
             }
 
+            var addedChartIds = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < charts.Length; i++)
+                addedChartIds.Add(charts[i].ChartId);
+
             foreach (SongInfo song in songs)
             {
                 selector = Append(selector, new SongJacketEntry
@@ -561,14 +612,18 @@ namespace InFalsusChartExt.CustomSong.Install
                     }
                     foreach (string chartId in chartIds)
                     {
-                    charts = Append(charts, new SongDataChartJacketEntry
-                    {
-                        ChartId = chartId,
-                        JacketLargeMaterial =
-                            template.JacketLargeMaterial,
-                        JacketSmallMaterial =
-                            template.JacketSmallMaterial,
-                    });
+                        if (!addedChartIds.Add(chartId))
+                            continue;
+                        charts = Append(
+                            charts,
+                            new SongDataChartJacketEntry
+                            {
+                                ChartId = chartId,
+                                JacketLargeMaterial =
+                                    template.JacketLargeMaterial,
+                                JacketSmallMaterial =
+                                    template.JacketSmallMaterial,
+                            });
                     }
                 }
             }
@@ -643,6 +698,52 @@ namespace InFalsusChartExt.CustomSong.Install
         internal static void RefreshSongDataCaches(SongData data)
         {
             SongDataNativeCache.Refresh(data);
+        }
+
+        internal static void UpdatePreviewForChart(
+            CustomChartPlan chart)
+        {
+            if (chart?.Song is null)
+                return;
+            if (!InstalledSongInfo.TryGetValue(
+                    chart.Song.RuntimeSongId,
+                    out SongInfo info) ||
+                info is null)
+                return;
+            float start = chart.Song.PreviewStartFor(chart.Slot);
+            float end = chart.Song.PreviewEndFor(chart.Slot);
+            if (!float.IsFinite(start) ||
+                !float.IsFinite(end) ||
+                end < start)
+                return;
+            info.PreviewStartSeconds = start;
+            info.PreviewEndSeconds = end;
+        }
+
+        internal static void UpdatePreviewForSelection(
+            ushort songId,
+            int slot)
+        {
+            if (!InstalledSongInfo.TryGetValue(
+                    songId, out SongInfo info) ||
+                info is null)
+                return;
+            if (!CustomSongRuntime.TryGetSongByRuntimeId(
+                    songId, out CustomSongPlan song))
+                return;
+            float start = song.PreviewStartFor(slot);
+            float end = song.PreviewEndFor(slot);
+            if (!float.IsFinite(start) ||
+                !float.IsFinite(end) ||
+                end < start)
+                return;
+            info.PreviewStartSeconds = start;
+            info.PreviewEndSeconds = end;
+        }
+
+        internal static void ResetInstalledSongInfo()
+        {
+            InstalledSongInfo.Clear();
         }
 
         private static int SlotForDifficulty(

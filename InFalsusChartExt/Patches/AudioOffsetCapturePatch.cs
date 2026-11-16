@@ -1,6 +1,10 @@
 using System.Reflection;
 using HarmonyLib;
+#if MELONLOADER
 using Il2Cpp_J;
+#elif BEPINEX
+using _J;
+#endif
 
 namespace InFalsusChartExt
 {
