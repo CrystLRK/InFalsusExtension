@@ -165,7 +165,7 @@ namespace InFalsusChartExt
 
     internal sealed class VisualFlickNoteInstance : VisualNoteInstance
     {
-        private Il2Cpp.FlickNoteV3 _flick;
+        private IFCEFlickNoteV3 _flick;
         private Quaternion _rootRotation;
         private Vector3 _rootScale;
 
@@ -196,7 +196,7 @@ namespace InFalsusChartExt
                     root.SetParent(parent, false);
                 VisualNoteObjectUtil.CloneMaterials(
                     GameObject, OwnedMaterials);
-                _flick = GameObject.GetComponent<Il2Cpp.FlickNoteV3>();
+                _flick = GameObject.GetComponent<IFCEFlickNoteV3>();
                 if (_flick == null || _flick.Pointer == IntPtr.Zero)
                     throw new InvalidOperationException(
                         "native flick component is unavailable");

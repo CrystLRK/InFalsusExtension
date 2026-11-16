@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using InFalsusChartExt.CustomSong.Chart;
 using InFalsusChartExt.CustomSong.Audio;
 using InFalsusChartExt.CustomSong.Assets;
+using InFalsusChartExt.CustomSong.Config;
 using InFalsusChartExt.CustomSong.Discovery;
 using InFalsusChartExt.CustomSong.Install;
 using InFalsusChartExt.CustomSong.Scores;
@@ -20,6 +21,9 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
         private readonly Dictionary<string, CustomChartPlan> _byParserKey =
             new Dictionary<string, CustomChartPlan>(
                 StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<ushort, CustomSongPlan>
+            _byRuntimeId =
+                new Dictionary<ushort, CustomSongPlan>();
 
         internal CustomLibraryPlan Plan { get; }
         internal CustomSongPlan ActiveSong { get; private set; }
@@ -33,11 +37,14 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
                 foreach (CustomSongPlan song in pack.Songs)
                 {
                     _byBaseName.Add(song.BaseName, song);
+                    if (song.RuntimeSongId != 0)
+                        _byRuntimeId[song.RuntimeSongId] = song;
                     foreach (CustomChartPlan chart in song.Charts)
                     {
                         _byLogicalKey.Add(
                             chart.LogicalChartKey, chart);
-                        _byParserKey.Add(chart.ParserKey, chart);
+                        if (!_byParserKey.ContainsKey(chart.ParserKey))
+                            _byParserKey.Add(chart.ParserKey, chart);
                     }
                 }
             }
@@ -47,6 +54,11 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
             string baseName,
             out CustomSongPlan song) =>
             _byBaseName.TryGetValue(baseName ?? "", out song);
+
+        internal bool TryGetSongByRuntimeId(
+            ushort songId,
+            out CustomSongPlan song) =>
+            _byRuntimeId.TryGetValue(songId, out song);
 
         internal bool TryGetSongForAudioName(
             string audioName,
@@ -103,6 +115,7 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
         {
             ActiveChart = chart;
             ActiveSong = chart?.Song;
+            SongLibraryInstaller.UpdatePreviewForChart(chart);
         }
     }
 
@@ -134,8 +147,20 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
                 if (_scanCompleted)
                     return _plan;
                 _scanCompleted = true;
+                LegacyConfigMigrator.EnsureMigrated(
+                    out string migrationReport);
+                if (!string.IsNullOrWhiteSpace(migrationReport))
+                {
+                    ChartExtMod.Log.Msg(
+                        "[CustomSong] migration report:\n" +
+                        migrationReport);
+                }
+                StartupLoadingScreen.SetStatus(
+                    "SCANNING CHART LIBRARY...");
                 _plan =
                     CustomLibraryDiscovery.Scan(out _scanReport);
+                StartupLoadingScreen.SetStatus(
+                    "PREPARING SONG DATA...");
                 ChartExtMod.Log.Msg(
                     string.IsNullOrWhiteSpace(_scanReport)
                         ? "[CustomSong] no custom packs discovered"
@@ -152,6 +177,7 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
                 _payloads = new CustomChartPayloadSource();
                 _plan = plan;
                 _installed = new InstalledCustomLibrary(plan);
+                StartupLoadingScreen.SetStatus("READY");
             }
         }
 
@@ -200,6 +226,16 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
             song = null;
             return _installed is not null &&
                    _installed.TryGetSongByBaseName(baseName, out song);
+        }
+
+        internal static bool TryGetSongByRuntimeId(
+            ushort songId,
+            out CustomSongPlan song)
+        {
+            song = null;
+            return _installed is not null &&
+                   _installed.TryGetSongByRuntimeId(
+                       songId, out song);
         }
 
         internal static bool TryGetSongForAudioName(
@@ -263,10 +299,12 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
                 _plan = null;
                 CustomSongAudioController.Reset();
                 CustomScoreRuntime.Reset();
+                SongLibraryInstaller.ResetInstalledSongInfo();
                 JacketMaterialService.Dispose();
                 PackAssetInstaller.Dispose();
                 _scanCompleted = false;
                 _scanReport = null;
+                SongSelectionState.Reset();
             }
         }
     }

@@ -9,6 +9,13 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <NoWarn>$(NoWarn);CS0649;CS0169;CS8500</NoWarn>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+
+    <Loader Condition="'$(Loader)' == ''">Melon</Loader>
+    <DefineConstants Condition="'$(Loader)' == 'BepInEx'">$(DefineConstants);BEPINEX</DefineConstants>
+    <DefineConstants Condition="'$(Loader)' != 'BepInEx'">$(DefineConstants);MELONLOADER</DefineConstants>
+    <OutputPath Condition="'$(Loader)' == 'BepInEx'">bin\$(Configuration)\BepInEx\</OutputPath>
+    <IntermediateOutputPath Condition="'$(Loader)' == 'BepInEx'">obj\BepInEx\$(Configuration)\</IntermediateOutputPath>
+    <IntermediateOutputPath Condition="'$(Loader)' != 'BepInEx'">obj\Melon\$(Configuration)\</IntermediateOutputPath>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -16,6 +23,9 @@
     <MlDir>$(GameDir)\MelonLoader\net6</MlDir>
     <Il2CppDir>$(GameDir)\MelonLoader\Il2CppAssemblies</Il2CppDir>
     <StagedDir>$(GameDir)\MelonLoader\Dependencies\Il2CppAssemblyGenerator\Il2CppInterop\Il2CppAssemblies</StagedDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">..\references\bepinex-6.0.0-be.793</BepInExDir>
+    <BepInExCoreDir>$(BepInExDir)\BepInEx\core</BepInExCoreDir>
+    <BepInExInteropDir Condition="'$(BepInExInteropDir)' == ''">..\references\bepinex-interop-work-latest\interop</BepInExInteropDir>
   </PropertyGroup>
 
   <Target Name="ValidateGameDir" BeforeTargets="ResolveReferences">
@@ -23,7 +33,15 @@
            Text="GameDir is required. Pass -p:GameDir=&quot;&lt;path to In Falsus&gt;&quot;." />
   </Target>
 
-  <ItemGroup>
+  <Target Name="ValidateBepInExDir" BeforeTargets="ResolveReferences"
+          Condition="'$(Loader)' == 'BepInEx'">
+    <Error Condition="!Exists('$(BepInExCoreDir)\BepInEx.Unity.IL2CPP.dll')"
+           Text="BepInEx core is missing. Pass -p:BepInExDir=&quot;&lt;path to extracted BepInEx 6 package&gt;&quot;." />
+    <Error Condition="!Exists('$(BepInExInteropDir)\Game.dll')"
+           Text="BepInEx interop assemblies are missing. Pass -p:BepInExInteropDir=&quot;&lt;path to BepInEx/interop&gt;&quot;." />
+  </Target>
+
+  <ItemGroup Condition="'$(Loader)' != 'BepInEx'">
     <Reference Include="MelonLoader"><HintPath>$(MlDir)\MelonLoader.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(MlDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="MonoMod.RuntimeDetour"><HintPath>$(MlDir)\MonoMod.RuntimeDetour.dll</HintPath><Private>false</Private></Reference>
@@ -41,9 +59,9 @@
     <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(Il2CppDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(Il2CppDir)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.UIModule"><HintPath>$(Il2CppDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Il2CppDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.AnimationModule"><HintPath>$(Il2CppDir)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.VideoModule"><HintPath>$(Il2CppDir)\UnityEngine.VideoModule.dll</HintPath><Private>false</Private></Reference>
-    <!-- Clean-room custom-song, audio, Addressables and data APIs. -->
     <Reference Include="Il2CppGame.UI.Common"><HintPath>$(Il2CppDir)\Il2CppGame.UI.Common.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Il2CppGame.Audio"><HintPath>$(Il2CppDir)\Il2CppGame.Audio.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Il2CppFMODUnity"><HintPath>$(Il2CppDir)\Il2CppFMODUnity.dll</HintPath><Private>false</Private></Reference>
@@ -56,6 +74,48 @@
     <Reference Include="Unity.Addressables"><HintPath>$(Il2CppDir)\Unity.Addressables.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Unity.ResourceManager"><HintPath>$(Il2CppDir)\Unity.ResourceManager.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Unity.InputSystem"><HintPath>$(Il2CppDir)\Unity.InputSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(Il2CppDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Loader)' == 'BepInEx'">
+    <Reference Include="BepInEx.Core"><HintPath>$(BepInExCoreDir)\BepInEx.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.Common"><HintPath>$(BepInExCoreDir)\BepInEx.Unity.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(BepInExCoreDir)\BepInEx.Unity.IL2CPP.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(BepInExCoreDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MonoMod.RuntimeDetour"><HintPath>$(BepInExCoreDir)\MonoMod.RuntimeDetour.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MonoMod.Utils"><HintPath>$(BepInExCoreDir)\MonoMod.Utils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(BepInExCoreDir)\Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+
+    <Reference Include="Game"><HintPath>$(BepInExInteropDir)\Game.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Game.Data"><HintPath>$(BepInExInteropDir)\Game.Data.dll</HintPath><Private>false</Private><Aliases>global,GameData</Aliases></Reference>
+    <Reference Include="Game.Common"><HintPath>$(BepInExInteropDir)\Game.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Game.Input"><HintPath>$(BepInExInteropDir)\Game.Input.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Game.Audio"><HintPath>$(BepInExInteropDir)\Game.Audio.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Game.UI.Common"><HintPath>$(BepInExInteropDir)\Game.UI.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Str"><HintPath>$(BepInExInteropDir)\Str.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(BepInExInteropDir)\Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppSystem"><HintPath>$(BepInExInteropDir)\Il2CppSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppSystem.Core"><HintPath>$(BepInExInteropDir)\Il2CppSystem.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="FMODUnity"><HintPath>$(BepInExInteropDir)\FMODUnity.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="FastText"><HintPath>$(BepInExInteropDir)\FastText.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(BepInExInteropDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ScreenCaptureModule"><HintPath>$(BepInExInteropDir)\UnityEngine.ScreenCaptureModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(BepInExInteropDir)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(BepInExInteropDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(BepInExInteropDir)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(BepInExInteropDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(BepInExInteropDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AnimationModule"><HintPath>$(BepInExInteropDir)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.VideoModule"><HintPath>$(BepInExInteropDir)\UnityEngine.VideoModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule"><HintPath>$(BepInExInteropDir)\UnityEngine.UnityWebRequestModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestTextureModule"><HintPath>$(BepInExInteropDir)\UnityEngine.UnityWebRequestTextureModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestWWWModule"><HintPath>$(BepInExInteropDir)\UnityEngine.UnityWebRequestWWWModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestAssetBundleModule"><HintPath>$(BepInExInteropDir)\UnityEngine.UnityWebRequestAssetBundleModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AssetBundleModule"><HintPath>$(BepInExInteropDir)\UnityEngine.AssetBundleModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.Addressables"><HintPath>$(BepInExInteropDir)\Unity.Addressables.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.ResourceManager"><HintPath>$(BepInExInteropDir)\Unity.ResourceManager.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem"><HintPath>$(BepInExInteropDir)\Unity.InputSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(BepInExInteropDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 
   <ItemGroup>

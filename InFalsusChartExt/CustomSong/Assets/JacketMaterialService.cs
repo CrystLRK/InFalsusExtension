@@ -5,7 +5,11 @@ using InFalsusChartExt.CustomSong.Discovery;
 using InFalsusChartExt.CustomSong.Install;
 using InFalsusChartExt.CustomSong.Lifecycle;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+#if MELONLOADER
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game.Data;
+#endif
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -34,29 +38,42 @@ namespace InFalsusChartExt.CustomSong.Assets
                 ChartExtMod.Log.Error(
                     "[CustomSong] custom jackets disabled because " +
                     "the marker hook is unavailable.");
+                StartupLoadingScreen.MarkJacketsReady();
                 return;
             }
             foreach (CustomPackPlan pack in plan.Packs)
             {
                 foreach (CustomSongPlan song in pack.Songs)
                 {
-                    if (string.IsNullOrWhiteSpace(
-                            song.JacketLargePath) &&
-                        string.IsNullOrWhiteSpace(
-                            song.JacketSmallPath))
+                    if (!HasAnyJacket(song))
                     {
                         continue;
                     }
                     Pending.Add(new DeferredSong(data, song));
                 }
             }
+            if (Pending.Count == 0)
+                StartupLoadingScreen.MarkJacketsReady();
+            else
+                ChartExtMod.Log.Msg(
+                    $"[CustomSong] jacket loading started: " +
+                    $"{Pending.Count} song(s)");
         }
 
         internal static void Tick()
         {
             if (Pending.Count == 0) return;
-            for (int i = Pending.Count - 1; i >= 0; i--)
+            const int MaxAttempts = 8;
+            const int MaxApplied = 2;
+            int attempts = 0;
+            int applied = 0;
+            SongData refreshData = null;
+            int i = Pending.Count - 1;
+            while (i >= 0 &&
+                   attempts < MaxAttempts &&
+                   applied < MaxApplied)
             {
+                attempts++;
                 DeferredSong pending = Pending[i];
                 if (pending.Deadline < DateTime.UtcNow)
                 {
@@ -64,12 +81,20 @@ namespace InFalsusChartExt.CustomSong.Assets
                         $"[CustomSong] jacket skipped after timeout: " +
                         pending.Song.Config.Id);
                     Pending.RemoveAt(i);
+                    i--;
                     continue;
                 }
                 try
                 {
-                    if (!TryApply(pending)) continue;
-                    Pending.RemoveAt(i);
+                    StartupLoadingScreen.SetStatus(
+                        "LOADING JACKETS: " +
+                        pending.Song.Config.Id);
+                    if (TryApply(pending))
+                    {
+                        Pending.RemoveAt(i);
+                        applied++;
+                        refreshData = pending.Data;
+                    }
                 }
                 catch (Exception exception)
                 {
@@ -78,6 +103,15 @@ namespace InFalsusChartExt.CustomSong.Assets
                         $"[CustomSong] jacket failed for " +
                         $"'{pending.Song.Config.Id}': {exception}");
                 }
+                i--;
+            }
+            if (refreshData is not null)
+                SongLibraryInstaller.RefreshSongDataCaches(refreshData);
+            if (Pending.Count == 0)
+            {
+                StartupLoadingScreen.MarkJacketsReady();
+                ChartExtMod.Log.Msg(
+                    "[CustomSong] jacket loading complete");
             }
         }
 
@@ -115,22 +149,39 @@ namespace InFalsusChartExt.CustomSong.Assets
             if (largeTemplate is null || smallTemplate is null)
                 return false;
 
-            PendingReference large = null;
-            PendingReference small = null;
+            var largeByPath =
+                new Dictionary<string, PendingReference>(
+                    StringComparer.OrdinalIgnoreCase);
+            var smallByPath =
+                new Dictionary<string, PendingReference>(
+                    StringComparer.OrdinalIgnoreCase);
             bool committed = false;
             try
             {
-                large = CreatePending(
-                    pending.Song.JacketLargePath,
-                    largeTemplate);
-                small = CreatePending(
-                    pending.Song.JacketSmallPath,
-                    smallTemplate);
+                var largeBySlot =
+                    new PendingReference[4];
+                var smallBySlot =
+                    new PendingReference[4];
+                for (int slot = 0; slot < 4; slot++)
+                {
+                    largeBySlot[slot] = CreatePending(
+                        pending.Song.JacketLargeFor(slot),
+                        largeTemplate,
+                        largeByPath);
+                    smallBySlot[slot] = CreatePending(
+                        pending.Song.JacketSmallFor(slot),
+                        smallTemplate,
+                        smallByPath);
+                }
+                PendingReference selectorLarge =
+                    largeBySlot[0] ?? FirstPending(largeBySlot);
+                PendingReference selectorSmall =
+                    smallBySlot[0] ?? FirstPending(smallBySlot);
                 AssetReferenceT<Material> largeReference =
-                    large?.Reference ??
+                    selectorLarge?.Reference ??
                     selector.JacketLargeMaterial;
                 AssetReferenceT<Material> smallReference =
-                    small?.Reference ??
+                    selectorSmall?.Reference ??
                     selector.JacketSmallMaterial;
 
                 var selectorEntries =
@@ -168,15 +219,28 @@ namespace InFalsusChartExt.CustomSong.Assets
                                 chartId);
                         SongDataChartJacketEntry entry =
                             chartEntries[index];
-                        entry.JacketLargeMaterial = largeReference;
-                        entry.JacketSmallMaterial = smallReference;
+                        PendingReference chartLarge =
+                            largeBySlot[chart.Slot] ??
+                            selectorLarge;
+                        PendingReference chartSmall =
+                            smallBySlot[chart.Slot] ??
+                            selectorSmall;
+                        entry.JacketLargeMaterial =
+                            chartLarge?.Reference ??
+                            selector.JacketLargeMaterial;
+                        entry.JacketSmallMaterial =
+                            chartSmall?.Reference ??
+                            selector.JacketSmallMaterial;
                         chartEntries[index] = entry;
                     }
                 }
                 data.chartIdJacketMaterials = chartEntries;
-                if (large is not null) Register(large);
-                if (small is not null) Register(small);
-                SongLibraryInstaller.RefreshSongDataCaches(data);
+                foreach (PendingReference value
+                         in largeByPath.Values)
+                    Register(value);
+                foreach (PendingReference value
+                         in smallByPath.Values)
+                    Register(value);
                 committed = true;
                 return true;
             }
@@ -184,10 +248,50 @@ namespace InFalsusChartExt.CustomSong.Assets
             {
                 if (!committed)
                 {
-                    UnregisterAndDispose(large);
-                    UnregisterAndDispose(small);
+                    foreach (PendingReference value
+                             in largeByPath.Values)
+                        UnregisterAndDispose(value);
+                    foreach (PendingReference value
+                             in smallByPath.Values)
+                        UnregisterAndDispose(value);
                 }
             }
+        }
+
+        private static bool HasAnyJacket(CustomSongPlan song)
+        {
+            for (int slot = 0; slot < 4; slot++)
+            {
+                if (!string.IsNullOrWhiteSpace(
+                        song.JacketLargeFor(slot)) ||
+                    !string.IsNullOrWhiteSpace(
+                        song.JacketSmallFor(slot)))
+                    return true;
+            }
+            return false;
+        }
+
+        private static PendingReference FirstPending(
+            PendingReference[] values)
+        {
+            for (int i = 0; i < values.Length; i++)
+                if (values[i] is not null)
+                    return values[i];
+            return null;
+        }
+
+        private static PendingReference CreatePending(
+            string path,
+            Material template,
+            Dictionary<string, PendingReference> cache)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+            if (cache.TryGetValue(path, out PendingReference existing))
+                return existing;
+            PendingReference created = CreatePending(path, template);
+            cache[path] = created;
+            return created;
         }
 
         private static PendingReference CreatePending(

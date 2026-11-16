@@ -1,6 +1,10 @@
 using System;
 using InFalsusChartExt.CustomSong.Discovery;
+#if MELONLOADER
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game.Data;
+#endif
 
 namespace InFalsusChartExt.CustomSong.Install
 {
@@ -15,7 +19,7 @@ namespace InFalsusChartExt.CustomSong.Install
                 AppendText(
                     mapping.packIdTypeMapping,
                     new PackId { Value = pack.RuntimePackId },
-                    pack.Config.Title,
+                    pack.Titles,
                     "pack title");
                 foreach (CustomSongPlan song in pack.Songs)
                 {
@@ -26,17 +30,17 @@ namespace InFalsusChartExt.CustomSong.Install
                     AppendText(
                         mapping.songIdTitleTypeMapping,
                         id,
-                        song.Config.Title,
+                        song.Titles,
                         "song title");
                     AppendText(
                         mapping.songIdArtistTypeMapping,
                         id,
-                        song.Config.Artist ?? string.Empty,
+                        song.Composers,
                         "song artist");
                     AppendText(
                         mapping.jacketIllustratorNameTypeMapping,
                         id,
-                        song.Config.JacketDesigner ?? string.Empty,
+                        song.Illustrators,
                         "jacket designer");
                 }
             }
@@ -45,7 +49,7 @@ namespace InFalsusChartExt.CustomSong.Install
         private static void AppendText<T>(
             DynamicStringMapping.StringTypeMapping<T> mapping,
             T id,
-            string text,
+            string[] languages,
             string label)
         {
             if (mapping?.Ids is null ||
@@ -55,14 +59,24 @@ namespace InFalsusChartExt.CustomSong.Install
                     label + " mapping is unavailable");
             }
 
+            string simplified =
+                Language(languages, 0);
+            string traditional =
+                Language(languages, 1);
+            string english =
+                Language(languages, 2);
+            string japanese =
+                Language(languages, 3);
+            string korean =
+                Language(languages, 4);
             var values =
                 new DynamicStringMapping.TextMappingValues
                 {
-                    English = text,
-                    Japanese = text,
-                    Korean = text,
-                    TraditionalChinese = text,
-                    SimplifiedChinese = text,
+                    English = english,
+                    Japanese = japanese,
+                    Korean = korean,
+                    TraditionalChinese = traditional,
+                    SimplifiedChinese = simplified,
                 };
 
             int index = mapping.Ids.IndexOf(id);
@@ -71,20 +85,51 @@ namespace InFalsusChartExt.CustomSong.Install
                 if (index >= mapping.IdValues.Count)
                     throw new InvalidOperationException(
                         label + " mapping is inconsistent");
+#if BEPINEX
+                BepInExValueTypeListBridge.SetItem(
+                    mapping.IdValues,
+                    index,
+                    values);
+#else
                 mapping.IdValues[index] = values;
+#endif
                 if (mapping.IdStr is not null &&
                     index < mapping.IdStr.Count)
                 {
-                    mapping.IdStr[index] = text;
+                    mapping.IdStr[index] = english;
                 }
             }
             else
             {
                 mapping.Ids.Add(id);
+#if BEPINEX
+                BepInExValueTypeListBridge.Add(
+                    mapping.IdValues,
+                    values);
+#else
                 mapping.IdValues.Add(values);
-                mapping.IdStr?.Add(text);
+#endif
+                mapping.IdStr?.Add(english);
             }
             mapping._TZA();
+        }
+
+        private static string Language(
+            string[] values,
+            int index)
+        {
+            if (values is not null &&
+                index >= 0 &&
+                index < values.Length &&
+                !string.IsNullOrEmpty(values[index]))
+                return values[index];
+            if (values is not null)
+            {
+                for (int i = 0; i < values.Length; i++)
+                    if (!string.IsNullOrEmpty(values[i]))
+                        return values[i];
+            }
+            return string.Empty;
         }
     }
 }

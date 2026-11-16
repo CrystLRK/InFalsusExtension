@@ -64,7 +64,7 @@ namespace InFalsusChartExt
                     return;
                 }
 
-                Il2Cpp.JudgementLineMeshEffect effect =
+                IFCEJudgementLineMeshEffect effect =
                     track.judgementLineMeshEffect;
                 Material output = track._tnA;
                 if (effect == null ||
@@ -240,7 +240,7 @@ namespace InFalsusChartExt
                 !IsFinite(_lastActiveMs))
                 return;
             Material output = track._tnA;
-            Il2Cpp.JudgementLineMeshEffect effect =
+            IFCEJudgementLineMeshEffect effect =
                 track.judgementLineMeshEffect;
             if (output != null &&
                 output.Pointer != IntPtr.Zero)

@@ -2,10 +2,13 @@ using System;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
+#if MELONLOADER
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game.Data;
+#endif
 using InFalsusChartExt.CustomSong.Discovery;
 using InFalsusChartExt.CustomSong.Lifecycle;
-using MonoMod.RuntimeDetour;
 
 namespace InFalsusChartExt
 {
@@ -19,7 +22,8 @@ namespace InFalsusChartExt
         private static readonly ConcurrentDictionary<ushort, byte>
             UnlockMasks =
                 new ConcurrentDictionary<ushort, byte>();
-        private static NativeDetour _detour;
+        private static NativeDetourHook<DifficultyStatusDelegate>
+            _detour;
         private static DifficultyStatusDelegate _original;
         private static DifficultyStatusDelegate _replacement;
         private static int _errors;
@@ -48,17 +52,15 @@ namespace InFalsusChartExt
                     throw new MissingMethodException(
                         "difficultyStatus native entry was not resolved");
                 _replacement = Detour;
-                _detour = new NativeDetour(
-                    target,
-                    Marshal.GetFunctionPointerForDelegate(_replacement),
-                    new NativeDetourConfig
-                    {
-                        ManualApply = true,
-                    });
-                _original =
-                    _detour.GenerateTrampoline<
-                        DifficultyStatusDelegate>();
-                _detour.Apply();
+                _detour = new NativeDetourHook<
+                    DifficultyStatusDelegate>();
+                _detour.Target = target;
+                _detour.DetourDelegate = _replacement;
+                _detour.Attach();
+                if (!_detour.IsHooked)
+                    throw new InvalidOperationException(
+                        "difficultyStatus native detour failed");
+                _original = _detour.Trampoline;
                 ChartExtMod.Log.Msg(
                     "[ChartExt] difficulty unlock native detour installed");
             }
@@ -71,9 +73,7 @@ namespace InFalsusChartExt
 
         internal static void Uninstall()
         {
-            try { _detour?.Undo(); }
-            catch { }
-            try { _detour?.Free(); }
+            try { _detour?.Detach(); }
             catch { }
             _detour = null;
             _original = null;

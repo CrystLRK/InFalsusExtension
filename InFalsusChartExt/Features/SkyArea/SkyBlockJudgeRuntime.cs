@@ -486,6 +486,9 @@ namespace InFalsusChartExt
                     NativeLayoutCatalog.Record.Judgment) = grade;
                 *(record +
                     NativeLayoutCatalog.Record.Final) = 1;
+                if (auto &&
+                    grade == ChartExtState.JudgeShiny)
+                    AutoplayScoreGuard.MarkUsed();
                 if (!EnqueuePresentation(
                         due.Member.Id,
                         due.GlobalIndex,
@@ -916,16 +919,24 @@ namespace InFalsusChartExt
             Il2Cpp_E._VD judge)
         {
             bool independentActive = false;
-            for (int i = 0; i < FrameGroupStates.Count; i++)
+            for (int li = 0; li < ActiveLayers.Count; li++)
             {
-                SkyGroupState state = FrameGroupStates[i];
-                if (!state.Latch ||
-                    !state.Covered ||
-                    state.PenaltyMs > 0.0 ||
-                    state.WarningMs <= 0.0)
-                    continue;
-                independentActive = true;
-                break;
+                SkyJudgmentLayer layer = ActiveLayers[li];
+                for (int gi = 0;
+                     gi < layer.GroupStates.Count;
+                     gi++)
+                {
+                    SkyGroupState state = layer.GroupStates[gi];
+                    if (!state.Latch ||
+                        !state.Covered ||
+                        state.PenaltyMs > 0.0 ||
+                        state.WarningMs <= 0.0)
+                        continue;
+                    independentActive = true;
+                    break;
+                }
+                if (independentActive)
+                    break;
             }
 
             bool nativeActive = false;

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using MelonLoader;
 using UnityEngine;
 
 namespace InFalsusChartExt
@@ -35,12 +34,20 @@ namespace InFalsusChartExt
             public float Y = 0.5f;
             public int Size = 6;
             public Color Color = Color.white;
+            public Color Color2 = Color.white;
             public float Scale = 1f;
             public bool Shadow = true;
+            public Color ShadowColor = new Color(0f, 0f, 0f, 1f);
             public float ShadowAlpha = 0.55f;
             public float ShadowScaleX = 1.8f;
             public float ShadowScaleY = 2.8f;
             public float ShadowOffsetY = 0f;
+            public float Spacing;
+            public float Amp;
+            public float Hz;
+            public float Rot;
+            public float Stagger;
+            public float Pop = 1f;
         }
 
         private static readonly Dictionary<long, Style> Styles = new Dictionary<long, Style>();
@@ -54,6 +61,8 @@ namespace InFalsusChartExt
         private static int _logs;
         private static int _errors;
         private static int _drawErrors;
+        private static readonly HashSet<long> DrawLogged =
+            new HashSet<long>();
         private static string _failedFor;
         private static string _fatalFor;
         private static string _fatalTitle;
@@ -67,6 +76,7 @@ namespace InFalsusChartExt
             public string LastText;
             public float LastSize;
             public Color LastColor;
+            public Color LastColor2;
             public GameObject Shadow;
             public MeshRenderer ShadowRenderer;
             public Material ShadowMaterial;
@@ -80,7 +90,11 @@ namespace InFalsusChartExt
         private static readonly List<GameObject> AllFastObjects = new List<GameObject>();
         private static bool _fastTried;
         private static bool _fastFailed;
+        private static bool _fastDisabled;
+        private static int _zeroBoundsCount;
         private static Il2CppFastText.FastText _fastTemplate;
+        private static Il2CppFastText.Data.FastTextFontFamily _customFamily;
+        private static bool _fontsTried;
         private static Transform _fastRoot;
         private static Canvas _fastCanvas;
         private static Camera _fastCamera;
@@ -204,7 +218,19 @@ namespace InFalsusChartExt
                     if (el.TryGetProperty("size", out JsonElement es)) st.Size = es.GetInt32();
                     if (el.TryGetProperty("color", out JsonElement ec) && ec.ValueKind == JsonValueKind.String)
                         st.Color = ParseColor(ec.GetString());
+                    if (!el.TryGetProperty("fill2", out _))
+                        st.Color2 = st.Color;
                     if (el.TryGetProperty("scale", out JsonElement esc)) st.Scale = esc.GetSingle();
+                    if (el.TryGetProperty("fill2", out JsonElement ef2) && ef2.ValueKind == JsonValueKind.String)
+                        st.Color2 = ParseColor(ef2.GetString());
+                    if (el.TryGetProperty("spacing", out JsonElement esp)) st.Spacing = esp.GetSingle();
+                    if (el.TryGetProperty("amp", out JsonElement eam)) st.Amp = eam.GetSingle();
+                    if (el.TryGetProperty("hz", out JsonElement ehz)) st.Hz = ehz.GetSingle();
+                    if (el.TryGetProperty("rot", out JsonElement ero)) st.Rot = ero.GetSingle();
+                    if (el.TryGetProperty("stagger", out JsonElement est)) st.Stagger = est.GetSingle();
+                    if (el.TryGetProperty("pop", out JsonElement epop)) st.Pop = epop.GetSingle();
+                    if (el.TryGetProperty("shadowColor", out JsonElement esc2) && esc2.ValueKind == JsonValueKind.String)
+                        st.ShadowColor = ParseColor(esc2.GetString());
                     if (el.TryGetProperty("shadow", out JsonElement esh)) st.Shadow = esh.GetBoolean();
                     if (el.TryGetProperty("shadowAlpha", out JsonElement esa)) st.ShadowAlpha = esa.GetSingle();
                     if (el.TryGetProperty("shadowScaleX", out JsonElement essx)) st.ShadowScaleX = essx.GetSingle();
@@ -270,6 +296,8 @@ namespace InFalsusChartExt
             Sorted.Clear();
             ResetFastSchedule();
             ResetFast();
+            _fastDisabled = false;
+            _zeroBoundsCount = 0;
         }
 
         internal static void ReportFatal(string title, string detail)
@@ -340,7 +368,7 @@ namespace InFalsusChartExt
                 if (Sorted.Count == 0 || Styles.Count == 0) return;
                 double nowMs = NowMs();
                 if (double.IsNaN(nowMs)) return;
-                if (EnsureFastRenderer())
+                if (!_fastDisabled && EnsureFastRenderer())
                 {
                     DrawFast(nowMs);
                     return;
@@ -348,10 +376,24 @@ namespace InFalsusChartExt
                 if (_font == null && !_fontFailed)
                 {
                     // 逐级回退：单名字体（前一版的字符串数组重载在运行期不存在）→ 系统 Arial → 内置字体。
+                    try
+                    {
+                        var names =
+                            new Il2CppInterop.Runtime.InteropTypes.Arrays
+                                .Il2CppStringArray(new[]
+                            {
+                                "Microsoft YaHei",
+                                "Meiryo",
+                                "Arial",
+                            });
+                        _font = Font.CreateDynamicFontFromOSFont(names, 64);
+                    }
+                    catch { }
                     try { _font = Font.CreateDynamicFontFromOSFont("Microsoft YaHei", 48); } catch { }
                     if (_font == null) { try { _font = Font.CreateDynamicFontFromOSFont("Meiryo", 48); } catch { } }
                     if (_font == null) { try { _font = Font.CreateDynamicFontFromOSFont("Arial", 48); } catch { } }
                     if (_font == null) { try { _font = Resources.GetBuiltinResource<Font>("Arial.ttf"); } catch { } }
+                    if (_font == null) { try { _font = GUI.skin != null ? GUI.skin.label.font : null; } catch { } }
                     if (_font == null)
                     {
                         _fontFailed = true;
@@ -385,13 +427,7 @@ namespace InFalsusChartExt
                     if (st.FadeOut > 0 && duration - rel < st.FadeOut)
                         alpha = Math.Min(alpha, (float)((duration - rel) / st.FadeOut));
                     alpha = Math.Clamp(alpha, 0f, 1f);
-                    Color c = st.Color;
-                    c.a *= alpha;
-                    _style.fontSize = st.Size;
-                    _style.normal.textColor = c;
-                    float w = Screen.width * 0.9f;
-                    GUI.Label(new Rect(st.X * Screen.width - w * 0.5f, st.Y * Screen.height, w, st.Size * 1.8f),
-                              st.Text ?? string.Empty, _style);
+                    DrawImGuiLine(st, rel, duration, alpha, nowMs);
                 }
                 GUI.depth = oldDepth;
             }
@@ -400,6 +436,214 @@ namespace InFalsusChartExt
                 // 绘制异常只在最初几次记录，避免逐帧刷日志（历史实测每帧数百条）。
                 if (_drawErrors < 3) { _drawErrors++; ChartExtMod.Log.Error("[ChartExt] showtext draw failed: " + e); }
             }
+        }
+
+        private static void DrawImGuiLine(
+            Style st,
+            double rel,
+            double duration,
+            float alpha,
+            double nowMs)
+        {
+            string text = st.Text ?? string.Empty;
+            if (text.Length == 0) return;
+            bool perGlyph = st.Stagger > 0f ||
+                            st.Amp > 0.001f ||
+                            Math.Abs(st.Rot) > 0.001f ||
+                            st.Pop > 1.001f;
+            if (!perGlyph)
+            {
+                Color color = st.Color;
+                color.a *= alpha;
+                _style.fontSize = st.Size;
+                _style.normal.textColor = color;
+                float width = Screen.width * 0.9f;
+                GUI.Label(
+                    new Rect(
+                        st.X * Screen.width - width * 0.5f,
+                        st.Y * Screen.height,
+                        width,
+                        st.Size * 1.8f),
+                    text,
+                    _style);
+                return;
+            }
+
+            var glyphs = new List<string>(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (char.IsHighSurrogate(c) && i + 1 < text.Length &&
+                    char.IsLowSurrogate(text[i + 1]))
+                {
+                    glyphs.Add(text.Substring(i, 2));
+                    i++;
+                }
+                else
+                {
+                    glyphs.Add(c.ToString());
+                }
+            }
+            var advances = new float[glyphs.Count];
+            for (int i = 0; i < glyphs.Count; i++)
+                advances[i] = GlyphAdvance(glyphs[i], st.Size);
+
+            float maxWidth = Screen.width * 0.9f;
+            var lines = new List<(int Start, int Count, float Width)>();
+            int first = 0;
+            float cursor = 0f;
+            for (int i = 0; i < glyphs.Count; i++)
+            {
+                float width = advances[i] + (i > first ? st.Spacing : 0f);
+                if (i > first && cursor + width > maxWidth &&
+                    lines.Count + 1 < 4)
+                {
+                    lines.Add((first, i - first, cursor));
+                    first = i;
+                    cursor = 0f;
+                    width = advances[i];
+                }
+                cursor += width;
+            }
+            if (first < glyphs.Count)
+                lines.Add((first, glyphs.Count - first, cursor));
+            if (lines.Count == 0) return;
+
+            float lineHeight = st.Size * 1.18f;
+            float centerX = st.X * Screen.width;
+            float centerY = st.Y * Screen.height;
+            int sourceIndex = 0;
+            for (int row = 0; row < lines.Count; row++)
+            {
+                (int start, int count, float width) = lines[row];
+                float x = centerX - width * 0.5f;
+                float y = centerY +
+                    (row - (lines.Count - 1) * 0.5f) * lineHeight;
+                for (int k = 0; k < count; k++, sourceIndex++)
+                {
+                    int index = start + k;
+                    string glyph = glyphs[index];
+                    float advance = advances[index];
+                    if (glyph == " " || glyph == "\u3000")
+                    {
+                        x += advance + st.Spacing;
+                        continue;
+                    }
+                    double glyphRel = rel -
+                        (st.Stagger > 0f
+                            ? sourceIndex * st.Stagger
+                            : 0.0);
+                    if (glyphRel < 0) continue;
+                    float appear = st.FadeIn > 0
+                        ? Mathf.Clamp01((float)glyphRel /
+                                        (float)st.FadeIn)
+                        : 1f;
+                    float glyphAlpha = Math.Min(alpha, appear);
+                    if (glyphAlpha <= 0.004f)
+                    {
+                        x += advance + st.Spacing;
+                        continue;
+                    }
+                    float ease = appear * appear *
+                                 (3f - 2f * appear);
+                    float pop = Mathf.Lerp(
+                        Mathf.Max(1f, st.Pop), 1f, ease);
+                    float phase = (float)(nowMs / 1000.0) *
+                        2f * Mathf.PI * st.Hz +
+                        sourceIndex * 1.7f;
+                    float dx = Mathf.Sin(phase) * st.Amp;
+                    float dy = Mathf.Sin(phase * 1.31f + 0.7f) *
+                        st.Amp * 0.62f;
+                    float rotation = Mathf.Sin(
+                        phase * 0.9f + sourceIndex * 0.6f) * st.Rot;
+                    Color color = st.Color;
+                    color.a *= glyphAlpha;
+                    Color shadow = st.ShadowColor;
+                    shadow.a *= glyphAlpha;
+                    DrawImGuiGlyph(
+                        glyph,
+                        x + advance * 0.5f + dx,
+                        y + dy,
+                        st.Size * pop,
+                        advance,
+                        rotation,
+                        color,
+                        st.Shadow ? shadow : Color.clear,
+                        st.ShadowOffsetY);
+                    x += advance + st.Spacing;
+                }
+            }
+        }
+
+        private static void DrawImGuiGlyph(
+            string glyph,
+            float centerX,
+            float centerY,
+            float size,
+            float advance,
+            float rotation,
+            Color color,
+            Color shadow,
+            float shadowOffsetY)
+        {
+            if (_style == null) return;
+            _style.fontSize = Mathf.Max(1, Mathf.RoundToInt(size));
+            Matrix4x4 oldMatrix = GUI.matrix;
+            try
+            {
+                GUI.matrix = Matrix4x4.TRS(
+                    new Vector3(centerX, centerY, 0f),
+                    Quaternion.Euler(0f, 0f, rotation),
+                    Vector3.one);
+                float width = Mathf.Max(size * 1.5f, advance);
+                Rect rect = new Rect(
+                    -width * 0.5f,
+                    -size * 0.62f,
+                    width,
+                    size * 1.24f);
+                if (shadow.a > 0.001f)
+                {
+                    _style.normal.textColor = shadow;
+                    GUI.Label(
+                        new Rect(
+                            rect.x,
+                            rect.y - shadowOffsetY,
+                            rect.width,
+                            rect.height),
+                        glyph,
+                        _style);
+                }
+                _style.normal.textColor = color;
+                GUI.Label(rect, glyph, _style);
+            }
+            catch (Exception e)
+            {
+                if (_drawErrors < 5)
+                {
+                    _drawErrors++;
+                    ChartExtMod.Log.Error(
+                        "[ChartExt] showtext glyph draw failed: " +
+                        e.Message);
+                }
+            }
+            finally
+            {
+                GUI.matrix = oldMatrix;
+            }
+        }
+
+        private static float GlyphAdvance(string glyph, float size)
+        {
+            if (string.IsNullOrEmpty(glyph)) return 0f;
+            if (glyph == " " || glyph == "\u3000") return size * 0.32f;
+            char c = glyph[0];
+            if (c < 0x80)
+            {
+                if (char.IsDigit(c) || char.IsUpper(c))
+                    return size * 0.62f;
+                if (char.IsLower(c)) return size * 0.52f;
+            }
+            return size;
         }
 
         private static void Fail(
@@ -475,22 +719,80 @@ namespace InFalsusChartExt
             _fastTried = true;
             try
             {
+                Camera templateCamera = FindFastCamera();
                 var all = UnityEngine.Object.FindObjectsOfType<Il2CppFastText.FastText>();
+                Il2CppFastText.FastText best = null;
+                int bestScore = int.MinValue;
                 if (all != null)
                 {
                     for (int i = 0; i < all.Length; i++)
                     {
                         var ft = all[i];
                         if (ft == null || ft.Pointer == IntPtr.Zero) continue;
+                        int score = 0;
                         try
                         {
                             if (ft.fontFamilyAsset == null) continue;
                             if (!ft.gameObject.activeInHierarchy) continue;
+                            Bounds templateBounds =
+                                ft.meshRenderer.bounds;
+                            float templateArea =
+                                templateBounds.size.x *
+                                templateBounds.size.y;
+                            if (templateArea <= 0.000001f) continue;
+                            score += Mathf.Min(
+                                20,
+                                (int)(Mathf.Log10(templateArea + 1f) * 10f));
                         }
                         catch { continue; }
-                        _fastTemplate = ft;
-                        break;
+                        try
+                        {
+                            string sample = ft.TextParameters.Param0_String;
+                            if (!string.IsNullOrEmpty(sample) &&
+                                HasNonAscii(sample))
+                                score += 10;
+                            string family = ft.fontFamilyAsset.name ?? "";
+                            if (family.IndexOf("Stylised",
+                                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                family.IndexOf("Title",
+                                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                family.IndexOf("Song",
+                                    StringComparison.OrdinalIgnoreCase) >= 0)
+                                score += 10;
+                            Vector3 localScale = ft.transform.localScale;
+                            float extent = Mathf.Max(
+                                Mathf.Abs(localScale.x),
+                                Mathf.Abs(localScale.y));
+                            if (extent < 0.05f) score -= 40;
+                            else if (extent < 0.2f) score -= 10;
+                            else if (extent <= 3f) score += 10;
+                            if (templateCamera != null)
+                            {
+                                float depth = Vector3.Dot(
+                                    ft.transform.position -
+                                    templateCamera.transform.position,
+                                    templateCamera.transform.forward);
+                                if (depth < 1f) score -= 30;
+                                else if (depth > 2f) score += 5;
+                            }
+                        }
+                        catch { continue; }
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = ft;
+                        }
                     }
+                }
+                _fastTemplate = best;
+                if (!_fontsTried)
+                {
+                    _fontsTried = true;
+                    string fontsDirectory =
+                        FastTextFontSupport.FontsDirectory;
+                    FastTextFontSupport.ExportBaseFont(fontsDirectory);
+                    _customFamily = FastTextFontSupport.TryLoadCustomFamily(
+                        best.fontFamilyAsset, fontsDirectory);
                 }
                 if (_fastTemplate == null)
                 {
@@ -507,7 +809,7 @@ namespace InFalsusChartExt
                 try { canvas = _fastTemplate.GetComponentInParent<Canvas>(); } catch { }
                 _fastRoot = canvas != null ? canvas.transform : _fastTemplate.transform.parent;
                 _fastCanvas = canvas;
-                _fastCamera = FindFastCamera();
+                _fastCamera = templateCamera;
                 if (_fastCamera != null)
                 {
                     float depth = Vector3.Dot(
@@ -607,12 +909,18 @@ namespace InFalsusChartExt
                         (float)((entry.DurationMs - rel) /
                                 st.FadeOut));
                 alpha = Math.Clamp(alpha, 0f, 1f);
+                float appear = st.FadeIn > 0
+                    ? Mathf.Clamp01((float)rel / (float)st.FadeIn)
+                    : 1f;
+                float pop = Mathf.Lerp(
+                    Mathf.Max(1f, st.Pop), 1f,
+                    appear * appear * (3f - 2f * appear));
 
                 if (!entry.Go.activeSelf)
                     entry.Go.SetActive(true);
                 entry.Go.transform.localScale = new Vector3(
-                    entry.BaseScale.x * st.Scale,
-                    entry.BaseScale.y * st.Scale,
+                    entry.BaseScale.x * st.Scale * pop,
+                    entry.BaseScale.y * st.Scale * pop,
                     entry.BaseScale.z);
                 RectTransform rt = entry.Rect;
                 PlaceFastText(entry, st);
@@ -620,11 +928,18 @@ namespace InFalsusChartExt
                 {
                     rt.sizeDelta = new Vector2(Screen.width * 0.9f, st.Size * 1.8f);
                 }
-                if (entry.LastText != st.Text)
+                string renderText = st.Text ?? string.Empty;
+                if (st.Stagger > 0f)
                 {
-                    entry.Text.SetTextNonLocalized(st.Text ?? "",
-                        Il2CppFastText.FastText.UpdateType.Default);
-                    entry.LastText = st.Text;
+                    int visible = Mathf.Clamp(
+                        Mathf.FloorToInt((float)rel / st.Stagger) + 1,
+                        0, renderText.Length);
+                    renderText = renderText.Substring(0, visible);
+                }
+                if (entry.LastText != renderText)
+                {
+                    SetFastText(entry.Text, renderText);
+                    entry.LastText = renderText;
                 }
                 if (Math.Abs(entry.LastSize - st.Size) > 0.01f)
                 {
@@ -632,25 +947,99 @@ namespace InFalsusChartExt
                         Il2CppFastText.FastText.UpdateType.Default);
                     entry.LastSize = st.Size;
                 }
+                try
+                {
+                    if (Math.Abs(entry.Text.characterSpacingAdjustment -
+                            st.Spacing) > 0.01f)
+                        entry.Text.characterSpacingAdjustment = st.Spacing;
+                }
+                catch { }
                 Color c = st.Color;
                 c.a *= alpha;
-                if (entry.LastColor != c)
+                Color c2 = st.Color2;
+                c2.a *= alpha;
+                if (entry.LastColor != c || entry.LastColor2 != c2)
                 {
-                    entry.Text.SetTextColor(c,
+                    entry.Text.SetTextColor(c, c2,
                         Il2CppFastText.FastText.UpdateType.Default);
                     entry.LastColor = c;
+                    entry.LastColor2 = c2;
                 }
                 try { entry.Text.EnsureDirtyFlagsProcessed(); } catch { }
                 try
                 {
                     Bounds textBounds = entry.Text.meshRenderer.bounds;
+                    if (textBounds.size.x <= 0.0001f ||
+                        textBounds.size.y <= 0.0001f)
+                    {
+                        _zeroBoundsCount++;
+                        if (_zeroBoundsCount > 12)
+                        {
+                            _fastDisabled = true;
+                            ResetFast();
+                            if (_logs < 4)
+                            {
+                                _logs++;
+                                ChartExtMod.Log.Warning(
+                                    "[ChartExt] showtext: FastText produced " +
+                                    "zero bounds; switching to IMGUI");
+                            }
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        _zeroBoundsCount = 0;
+                    }
                     if (textBounds.size.x > 0.0001f && textBounds.size.y > 0.0001f)
                     {
                         Vector3 desired = entry.Go.transform.position;
                         entry.Go.transform.position += desired - textBounds.center;
                     }
+                    if (DrawLogged.Count < 8 && DrawLogged.Add(id))
+                    {
+                        Vector3 viewport = _fastCamera != null
+                            ? _fastCamera.WorldToViewportPoint(
+                                entry.Go.transform.position)
+                            : new Vector3(-1f, -1f, -1f);
+                        ChartExtMod.Log.Msg(
+                            $"[ChartExt] showtext draw id={id} " +
+                            $"size={st.Size} scale={st.Scale:F2} " +
+                            $"base={entry.BaseScale} " +
+                            $"pos={entry.Go.transform.position} " +
+                            $"bounds={textBounds.size} " +
+                            $"viewport={viewport}");
+                    }
                 }
                 catch { }
+                if (st.Amp > 0.001f || Math.Abs(st.Rot) > 0.001f)
+                {
+                    float phase = (float)(nowMs / 1000.0) *
+                        2f * Mathf.PI * st.Hz;
+                    float dx = Mathf.Sin(phase) * st.Amp;
+                    float dy = Mathf.Sin(phase * 1.31f + 0.7f) *
+                        st.Amp * 0.62f;
+                    try
+                    {
+                        if (rt != null)
+                            rt.anchoredPosition += new Vector2(dx, -dy);
+                        else
+                        {
+                            Camera camera = _fastCamera;
+                            if (camera != null)
+                            {
+                                entry.Go.transform.position +=
+                                    camera.transform.right * dx +
+                                    camera.transform.up * dy;
+                            }
+                        }
+                        entry.Go.transform.localRotation =
+                            Quaternion.Euler(
+                                0f, 0f,
+                                Mathf.Sin(phase * 0.9f) * st.Rot);
+                    }
+                    catch { }
+                }
                 if (entry.Shadow != null)
                 {
                     if (!st.Shadow)
@@ -677,7 +1066,8 @@ namespace InFalsusChartExt
                         catch { }
                         if (entry.ShadowMaterial != null)
                         {
-                            Color shadowColor = new Color(0f, 0f, 0f, st.ShadowAlpha * alpha);
+                            Color shadowColor = st.ShadowColor;
+                            shadowColor.a *= alpha;
                             entry.ShadowMaterial.color = shadowColor;
                             try { entry.ShadowMaterial.SetColor("_BaseColor", shadowColor); } catch { }
                         }
@@ -740,11 +1130,12 @@ namespace InFalsusChartExt
                     return null;
                 }
                 text.alignment = Il2CppFastText.Data.AlignmentOptions.Center;
+                if (_customFamily != null)
+                    FastTextFontSupport.Apply(text, _customFamily);
                 go.SetActive(true);
                 text.SetFontSize(st.Size, Il2CppFastText.FastText.UpdateType.Default);
                 text.SetTextColor(st.Color, Il2CppFastText.FastText.UpdateType.Default);
-                text.SetTextNonLocalized(st.Text ?? "",
-                    Il2CppFastText.FastText.UpdateType.Default);
+                SetFastText(text, st.Text ?? "");
                 var entry = new FastEntry
                 {
                     Go = go,
@@ -824,6 +1215,31 @@ namespace InFalsusChartExt
             catch { }
         }
 
+        private static void SetFastText(
+            Il2CppFastText.FastText text,
+            string value)
+        {
+            try
+            {
+                Il2CppStr.TextParameters parameters =
+                    Il2CppStr.TextParameters.CreateDirectString(
+                        value ?? string.Empty);
+                text.textParameters = parameters;
+                text.EnsureDirtyFlagsProcessed();
+            }
+            catch
+            {
+                try
+                {
+                    text.SetTextNonLocalized(
+                        value ?? string.Empty,
+                        Il2CppFastText.FastText.UpdateType.Default);
+                    text.EnsureDirtyFlagsProcessed();
+                }
+                catch { }
+            }
+        }
+
         private static Camera FindFastCamera()
         {
             try
@@ -842,6 +1258,13 @@ namespace InFalsusChartExt
                 return best;
             }
             catch { return null; }
+        }
+
+        private static bool HasNonAscii(string value)
+        {
+            for (int i = 0; i < value.Length; i++)
+                if (value[i] > 0x7E) return true;
+            return false;
         }
 
         private static void ResetFast()

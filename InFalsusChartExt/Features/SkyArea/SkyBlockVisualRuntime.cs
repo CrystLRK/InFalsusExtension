@@ -1194,7 +1194,7 @@ namespace InFalsusChartExt
         private static void AppendActiveFlicks(
             System.Text.StringBuilder text,
             string side,
-            Il2Cpp_k._Lg<Il2Cpp.FlickNoteV3> pool,
+            Il2Cpp_k._Lg<IFCEFlickNoteV3> pool,
             ref int emitted)
         {
             if (pool == null ||

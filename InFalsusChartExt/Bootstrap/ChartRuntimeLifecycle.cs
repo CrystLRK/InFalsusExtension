@@ -76,6 +76,7 @@ namespace InFalsusChartExt
                     "chart-context",
                     ChartRuntimeContext.ResetForChartSwitch);
             Run("showtext", ShowTextRuntime.DisposeResources);
+            Run("special-level", SpecialLevelRuntime.ResetForScene);
             Run("bomb", BombSkinRuntime.DisposeForSceneUnload);
             Run("timing-group", TimingGroupRuntime.ResetForChartSwitch);
             Run("timing-group-visual", TimingGroupVisualRuntime.ResetForChartSwitch);

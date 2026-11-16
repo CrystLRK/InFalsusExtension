@@ -1,6 +1,10 @@
 using System;
 using System.Runtime.InteropServices;
+#if MELONLOADER
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game.Data;
+#endif
 using MonoMod.RuntimeDetour;
 
 namespace InFalsusChartExt
@@ -89,8 +93,10 @@ namespace InFalsusChartExt
             {
                 if (AutoplayScoreGuard.ShouldSuppressResults)
                 {
-                    if (existingScore != IntPtr.Zero)
-                        Marshal.WriteInt64(existingScore, 0);
+                    // The native caller owns the existing-best slot and the
+                    // result page reads it back. Returning NoChange without
+                    // touching it preserves the previous best; writing zero
+                    // here made the result page show a bogus empty record.
                     return (int)GameResultsV4.UpdateResult.NoChange;
                 }
 

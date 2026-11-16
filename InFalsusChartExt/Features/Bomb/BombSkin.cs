@@ -725,8 +725,7 @@ namespace InFalsusChartExt
             if (!string.IsNullOrEmpty(_folder)) return _folder;
             try
             {
-                string modDir = Path.GetDirectoryName(typeof(ChartExtMod).Assembly.Location);
-                _folder = Path.Combine(modDir, FolderName);
+                _folder = PluginEnvironment.PluginDataDirectory;
             }
             catch
             {

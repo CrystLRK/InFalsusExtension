@@ -3,7 +3,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using MelonLoader;
 
 namespace InFalsusChartExt
 {

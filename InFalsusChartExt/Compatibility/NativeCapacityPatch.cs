@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using MelonLoader;
 
 namespace InFalsusChartExt
 {
@@ -244,30 +243,30 @@ namespace InFalsusChartExt
 
         private static void LoadConfiguration()
         {
-            MelonPreferences_Category category = MelonPreferences.CreateCategory(
+            PluginConfigCategory category = ChartExtMod.Config.Category(
                 "InFalsusChartExt.Capacity",
                 "In Falsus Chart Ext - Native Capacity");
-            SideNoteCapacity = category.CreateEntry(
+            SideNoteCapacity = category.Bind(
                 "SideNoteCapacity",
                 DefaultSideNoteCapacity,
                 "Per-side note capacity",
                 "Applied before chart construction. Restart required.").Value;
-            NoteIndexTableCapacity = category.CreateEntry(
+            NoteIndexTableCapacity = category.Bind(
                 "NoteIndexTableCapacity",
                 DefaultNoteIndexTableCapacity,
                 "Note index table capacity",
                 "Applied before chart construction. Restart required.").Value;
-            AuxTableCapacity = category.CreateEntry(
+            AuxTableCapacity = category.Bind(
                 "AuxTableCapacity",
                 DefaultAuxTableCapacity,
                 "Auxiliary note table capacity",
                 "Applied before chart construction. Restart required.").Value;
-            RecordCapacity = category.CreateEntry(
+            RecordCapacity = category.Bind(
                 "RecordCapacity",
                 DefaultRecordCapacity,
                 "Compiled record capacity",
                 "Applied before chart construction. Restart required.").Value;
-            JudgeStateCapacity = category.CreateEntry(
+            JudgeStateCapacity = category.Bind(
                 "JudgeStateCapacity",
                 DefaultJudgeStateCapacity,
                 "Per-chart judge state capacity",

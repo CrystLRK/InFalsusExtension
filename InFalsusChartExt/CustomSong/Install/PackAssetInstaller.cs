@@ -1,11 +1,19 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using InFalsusChartExt.CustomSong.Discovery;
 using InFalsusChartExt.CustomSong.Assets;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+#if MELONLOADER
 using Il2Cppifapp.Game;
 using Il2Cppifapp.Game.Data;
+using Il2CppStr;
+#elif BEPINEX
+using ifapp.Game;
+using ifapp.Game.Data;
+using Str;
+#endif
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -15,6 +23,7 @@ namespace InFalsusChartExt.CustomSong.Install
     {
         private static bool _applied;
         private static IntPtr _appliedAssets;
+        private static int _appliedLanguage = int.MinValue;
         private static readonly System.Collections.Generic.List<Owned>
             OwnedMaterials =
                 new System.Collections.Generic.List<Owned>();
@@ -26,7 +35,8 @@ namespace InFalsusChartExt.CustomSong.Install
             if (assets is null || plan is null)
                 return;
             if (_applied &&
-                _appliedAssets == assets.Pointer)
+                _appliedAssets == assets.Pointer &&
+                _appliedLanguage == CurrentLanguage())
             {
                 return;
             }
@@ -57,19 +67,18 @@ namespace InFalsusChartExt.CustomSong.Install
                 int styleIndex = FindStyleIndex(source, pack);
                 PackSelectSceneAssets.SongSelectPackAssets style =
                     source[styleIndex];
-                if (!string.IsNullOrWhiteSpace(pack.JacketPath))
-                {
-                    ApplyJacket(
-                        ref style,
-                        pack.JacketPath,
-                        source[styleIndex]);
-                }
+                ApplyVisuals(
+                    ref style,
+                    pack,
+                    source[styleIndex],
+                    CurrentLanguage());
                 next[pack.RuntimePackId] = style;
             }
 
             assets.packToAssets = next;
             _applied = true;
             _appliedAssets = assets.Pointer;
+            _appliedLanguage = CurrentLanguage();
         }
 
         private static int FindStyleIndex(
@@ -137,6 +146,7 @@ namespace InFalsusChartExt.CustomSong.Install
             ReleaseOwnedMaterials();
             _applied = false;
             _appliedAssets = IntPtr.Zero;
+            _appliedLanguage = int.MinValue;
         }
 
         private static void ReleaseOwnedMaterials()
@@ -151,10 +161,11 @@ namespace InFalsusChartExt.CustomSong.Install
             OwnedMaterials.Clear();
         }
 
-        private static void ApplyJacket(
+        private static void ApplyVisuals(
             ref PackSelectSceneAssets.SongSelectPackAssets style,
-            string path,
-            PackSelectSceneAssets.SongSelectPackAssets template)
+            CustomPackPlan pack,
+            PackSelectSceneAssets.SongSelectPackAssets template,
+            int language)
         {
             Material source = FirstMaterial(template);
             if (source is null)
@@ -165,6 +176,86 @@ namespace InFalsusChartExt.CustomSong.Install
                 return;
             }
 
+            var built = new Dictionary<string, Owned>(
+                StringComparer.Ordinal);
+            foreach (string key in VisualKeys)
+            {
+                string path = pack.Visual(key, language);
+                if (string.IsNullOrWhiteSpace(path))
+                    continue;
+                Owned owned = Build(source, path);
+                built[key] = owned;
+                OwnedMaterials.Add(owned);
+            }
+
+            Material MaterialFor(string key) =>
+                built.TryGetValue(key, out Owned value)
+                    ? value.Material
+                    : null;
+
+            Material songSelect = MaterialFor("songSelect");
+            if (songSelect is not null)
+            {
+                style.SongSelectLargeNonCompleted = songSelect;
+                style.SongSelectLargeCompleted = songSelect;
+            }
+            Material songSelectHover = MaterialFor("songSelectHover");
+            if (songSelectHover is not null)
+            {
+                style.SongSelectLargeNonCompletedHover =
+                    songSelectHover;
+                style.SongSelectLargeCompletedHover =
+                    songSelectHover;
+            }
+            Material selected = MaterialFor("selected");
+            if (selected is not null)
+            {
+                style.PackSelectLargeNonCompleted = selected;
+                style.PackSelectLargeCompleted = selected;
+            }
+            Material selectedHover = MaterialFor("selectedHover");
+            if (selectedHover is not null)
+            {
+                style.PackSelectLargeNonCompletedHover =
+                    selectedHover;
+                style.PackSelectLargeCompletedHover =
+                    selectedHover;
+            }
+            Material deselected = MaterialFor("deselected");
+            if (deselected is not null)
+            {
+                style.PackSelectNonCompleted = deselected;
+                style.PackSelectCompleted = deselected;
+            }
+            Material deselectedHover =
+                MaterialFor("deselectedHover");
+            if (deselectedHover is not null)
+            {
+                style.PackSelectNonCompletedHover =
+                    deselectedHover;
+                style.PackSelectCompletedHover =
+                    deselectedHover;
+            }
+            Material outline = MaterialFor("outline");
+            if (outline is not null)
+            {
+                style.OutlineNonCompleted = outline;
+                style.OutlineCompleted = outline;
+            }
+
+            if (built.TryGetValue("songSelect", out Owned backdrop))
+            {
+                style.BackingImageNonCompleted =
+                    backdrop.Material;
+                style.BackingImageCompleted =
+                    backdrop.Material;
+            }
+        }
+
+        private static Owned Build(
+            Material source,
+            string path)
+        {
             Texture2D texture = null;
             Material material = null;
             try
@@ -173,19 +264,7 @@ namespace InFalsusChartExt.CustomSong.Install
                     File.ReadAllBytes(path));
                 material = new Material(source);
                 material.mainTexture = texture;
-                style.PackSelectLargeNonCompleted = material;
-                style.PackSelectLargeNonCompletedHover = material;
-                style.PackSelectLargeCompleted = material;
-                style.PackSelectLargeCompletedHover = material;
-                style.PackSelectNonCompleted = material;
-                style.PackSelectNonCompletedHover = material;
-                style.PackSelectCompleted = material;
-                style.PackSelectCompletedHover = material;
-                style.BackingImageNonCompleted = material;
-                style.BackingImageCompleted = material;
-                style.OutlineNonCompleted = material;
-                style.OutlineCompleted = material;
-                OwnedMaterials.Add(new Owned(material, texture));
+                return new Owned(material, texture);
             }
             catch
             {
@@ -194,6 +273,37 @@ namespace InFalsusChartExt.CustomSong.Install
                 if (texture is not null)
                     Object.Destroy(texture);
                 throw;
+            }
+        }
+
+        private static readonly string[] VisualKeys =
+        {
+            "songSelect",
+            "songSelectHover",
+            "selected",
+            "selectedHover",
+            "deselected",
+            "deselectedHover",
+            "outline",
+        };
+
+        private static int CurrentLanguage()
+        {
+            try
+            {
+                switch ((int)Strings.GetCurrentLocalization())
+                {
+                    case 0: return 2;
+                    case 1: return 3;
+                    case 2: return 4;
+                    case 3: return 0;
+                    case 4: return 1;
+                    default: return CustomSongSchema.FallbackLanguage;
+                }
+            }
+            catch
+            {
+                return CustomSongSchema.FallbackLanguage;
             }
         }
 

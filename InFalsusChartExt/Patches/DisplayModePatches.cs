@@ -1,8 +1,11 @@
 using System;
 using System.Reflection;
 using HarmonyLib;
+#if MELONLOADER
 using Il2Cppifapp.Game.UI.Settings;
-using MelonLoader;
+#elif BEPINEX
+using ifapp.Game.UI.Settings;
+#endif
 using UnityEngine;
 
 namespace InFalsusChartExt
@@ -63,7 +66,7 @@ namespace InFalsusChartExt
         {
             if (method is null)
             {
-                MelonLogger.Warning(
+                ChartExtMod.Log.Warning(
                     $"[ChartExt] display mode patch target missing: {name}");
             }
             return method;

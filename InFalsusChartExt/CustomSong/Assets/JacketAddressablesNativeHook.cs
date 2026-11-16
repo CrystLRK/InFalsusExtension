@@ -46,8 +46,7 @@ namespace InFalsusChartExt.CustomSong.Assets
         private static readonly LoadAssetAsyncFn DetourDelegate =
             LoadAssetDetour;
 
-        private static MelonLoader.NativeUtils.NativeHook<
-            LoadAssetAsyncFn> _hook;
+        private static NativeDetourHook<LoadAssetAsyncFn> _hook;
         private static LoadAssetAsyncFn _trampoline;
         private static IntPtr _acquireMethodInfo;
         private static AcquireFn _acquire;
@@ -84,12 +83,9 @@ namespace InFalsusChartExt.CustomSong.Assets
                     _acquireMethodInfo = acquireMethod;
                     _acquire = Marshal.GetDelegateForFunctionPointer<
                         AcquireFn>(acquireTarget);
-                    _hook = new MelonLoader.NativeUtils.NativeHook<
-                        LoadAssetAsyncFn>();
+                    _hook = new NativeDetourHook<LoadAssetAsyncFn>();
                     _hook.Target = loadTarget;
-                    _hook.Detour =
-                        Marshal.GetFunctionPointerForDelegate(
-                            DetourDelegate);
+                    _hook.DetourDelegate = DetourDelegate;
                     _hook.Attach();
                     if (!_hook.IsHooked)
                         throw new InvalidOperationException(

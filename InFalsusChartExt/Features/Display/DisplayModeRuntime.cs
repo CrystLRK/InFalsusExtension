@@ -1,8 +1,12 @@
 using System;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+#if MELONLOADER
 using Il2Cppifapp.Game.UI.Settings;
 using Il2CppStr;
-using MelonLoader;
+#elif BEPINEX
+using ifapp.Game.UI.Settings;
+using Str;
+#endif
 using UnityEngine;
 
 namespace InFalsusChartExt
@@ -24,8 +28,8 @@ namespace InFalsusChartExt
     {
         private const string EntryName = "DisplayMode";
         private const double VerifyDelaySeconds = 1.0;
-        private static MelonPreferences_Category _category;
-        private static MelonPreferences_Entry<string> _modeEntry;
+        private static PluginConfigCategory _category;
+        private static PluginConfigEntry<string> _modeEntry;
         private static ConfiguredDisplayMode _mode =
             ConfiguredDisplayMode.FollowNative;
         private static IntPtr _panelPointer;
@@ -45,13 +49,13 @@ namespace InFalsusChartExt
         internal static ConfiguredDisplayMode Mode => _mode;
 
         internal static void Initialize(
-            MelonPreferences_Category category)
+            PluginConfigCategory category)
         {
             if (Initialized || category is null) return;
             _category = category;
             try
             {
-                _modeEntry = category.CreateEntry(
+                _modeEntry = category.Bind(
                     EntryName,
                     nameof(ConfiguredDisplayMode.FollowNative),
                     "窗口模式扩展",
@@ -410,7 +414,7 @@ namespace InFalsusChartExt
         {
             if (_modeEntry is null) return;
             _modeEntry.Value = _mode.ToString();
-            try { _category?.SaveToFile(); }
+            try { _category?.Save(); }
             catch { }
         }
 

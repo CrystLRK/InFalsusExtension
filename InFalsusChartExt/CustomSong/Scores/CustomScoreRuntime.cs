@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using InFalsusChartExt.CustomSong.Discovery;
+#if MELONLOADER
 using Il2Cppifapp.Game.Data;
+#elif BEPINEX
+using ifapp.Game.Data;
+#endif
 
 namespace InFalsusChartExt.CustomSong.Scores
 {

@@ -71,13 +71,24 @@ namespace InFalsusChartExt
         private static readonly List<string> DisableReasons =
             new List<string>();
         private static GameBuildProfile _current;
+        private static string _detectedRoot;
         private static bool _logged;
 
         internal static GameBuildProfile Current
         {
             get
             {
-                if (_current == null) _current = Detect();
+                string root = PluginEnvironment.GameRoot;
+                if (_current == null ||
+                    (_current.Abi is null &&
+                     !string.Equals(
+                         _detectedRoot,
+                         root,
+                         StringComparison.OrdinalIgnoreCase)))
+                {
+                    _detectedRoot = root;
+                    _current = Detect();
+                }
                 return _current;
             }
         }
@@ -87,6 +98,9 @@ namespace InFalsusChartExt
             GameBuildProfile profile = Current;
             if (_logged) return;
             _logged = true;
+            ChartExtMod.Log.Msg(
+                "[BuildProfile] game root: " +
+                PluginEnvironment.GameRoot);
 
             if (profile.Abi is not null &&
                 profile.Capabilities != NativeCapability.None &&
@@ -258,14 +272,14 @@ namespace InFalsusChartExt
         {
             try
             {
-                string mods = Path.GetDirectoryName(
-                    typeof(ChartExtMod).Assembly.Location);
-                return Path.GetFullPath(Path.Combine(mods, ".."));
+                if (!string.IsNullOrWhiteSpace(
+                        PluginEnvironment.GameRoot))
+                    return PluginEnvironment.GameRoot;
             }
             catch
             {
-                return Environment.CurrentDirectory;
             }
+            return Environment.CurrentDirectory;
         }
 
         private static string FindMetadata(string root)

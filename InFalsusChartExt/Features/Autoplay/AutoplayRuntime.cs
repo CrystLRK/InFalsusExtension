@@ -2,10 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using HarmonyLib;
-using MelonLoader;
 
 namespace InFalsusChartExt
 {
+    internal enum AutoplayMode
+    {
+        Off = 0,
+        Auto = 1,
+        Engine = 2,
+    }
+
     /// <summary>
     /// autoplay：把每个可判定音符自动判为最高 EXACT（大 EXACT / Shiny，记录字节 6），
     /// 覆盖原版与扩展音符；**noinput 跳过**（其记录被 park，不参与任何判定与计分），
@@ -19,13 +25,13 @@ namespace InFalsusChartExt
     internal static class AutoplayRuntime
     {
         private static bool _enabled;
+        private static AutoplayMode _mode;
         private static bool _groundOnly;
         private static int _cursor;
         private static int _holdCursor;
         private static readonly List<ChartExtState.AutoplayDue>
             ActiveHolds =
                 new List<ChartExtState.AutoplayDue>();
-        private static double _lastNow = -1e9;
         private static int _errors;
 #if IFCE_DIAGNOSTICS
         private static int _r7LateWrites;
@@ -38,11 +44,58 @@ namespace InFalsusChartExt
             {
                 if (_enabled == value) return;
                 _enabled = value;
+                if (!_enabled)
+                {
+                    _mode = AutoplayMode.Off;
+                    _groundOnly = false;
+                    AutoplayEngineInput.Enabled = false;
+                    AutoplayEngineInput.ReleaseAll();
+                    RdAutoplayRuntime.ReleaseAll();
+                }
+                else if (_mode == AutoplayMode.Off)
+                {
+                    _mode = AutoplayEngineInput.Enabled
+                        ? AutoplayMode.Engine
+                        : AutoplayMode.Auto;
+                }
                 ResetCursors();
-                if (_enabled &&
-                    !AutoplayScoreGuard.EnsureRunGuard())
-                    _enabled = false;
                 try { ChartExtMod.Log.Msg($"[ChartExt] autoplay {(_enabled ? "ON" : "OFF")}"); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Session-only Autoplay mode. Auto uses record replacement and the
+        /// engine cursor only for visual feedback; Engine uses native input
+        /// simulation and never rewrites judgement records.
+        /// </summary>
+        internal static AutoplayMode Mode
+        {
+            get => _mode;
+            set
+            {
+                if (_mode == value) return;
+                _mode = value;
+                if (_mode == AutoplayMode.Off)
+                {
+                    _enabled = false;
+                    _groundOnly = false;
+                    AutoplayEngineInput.Enabled = false;
+                    AutoplayEngineInput.ReleaseAll();
+                    RdAutoplayRuntime.ReleaseAll();
+                }
+                else
+                {
+                    AutoplayEngineInput.Enabled =
+                        _mode == AutoplayMode.Engine;
+                    _enabled = true;
+                }
+                ResetCursors();
+                try
+                {
+                    ChartExtMod.Log.Msg(
+                        "[ChartExt] autoplay mode " + _mode);
+                }
+                catch { }
             }
         }
 
@@ -57,7 +110,11 @@ namespace InFalsusChartExt
             set
             {
                 if (_groundOnly == value) return;
+                if (value && _mode == AutoplayMode.Off)
+                    Mode = AutoplayMode.Auto;
                 _groundOnly = value;
+                AutoplayEngineInput.ReleaseAll();
+                RdAutoplayRuntime.ReleaseAll();
                 ResetCursors();
                 try
                 {
@@ -78,20 +135,9 @@ namespace InFalsusChartExt
             {
                 if (!AutoplayScoreGuard.EnsureRunGuard())
                 {
-                    _enabled = false;
+                    Enabled = false;
                     ResetCursors();
-                    return;
                 }
-                if (ChartExtState.AutoplayDues.Count == 0) return;
-                double now = NowMs();
-                if (double.IsNaN(now)) return;
-                if (now < _lastNow - 5000.0)
-                    ResetCursors();
-                _lastNow = now;
-                while (_cursor < ChartExtState.AutoplayDues.Count &&
-                       ChartExtState.AutoplayDues[_cursor].StartMs < now - 5000.0)
-                    _cursor++;
-                UpdateActiveHolds(now);
             }
             catch (Exception e)
             {
@@ -102,6 +148,49 @@ namespace InFalsusChartExt
         internal static void ResetForChartSwitch()
         {
             ResetCursors();
+            AutoplayEngineInput.ResetForChartSwitch();
+            RdAutoplayRuntime.ResetForChartSwitch();
+        }
+
+        /// <summary>
+        /// Runs immediately before the native judge consumes input states.
+        /// Auto mode rewrites records; Engine mode injects native input.
+        /// </summary>
+        internal static void ApplyInputs(bool judgePass)
+        {
+            if (!BuildProfile.Supports(NativeCapability.Autoplay))
+                return;
+            if (!_enabled)
+                return;
+            try
+            {
+                if (!AutoplayScoreGuard.EnsureRunGuard())
+                {
+                    Enabled = false;
+                    AutoplayEngineInput.ReleaseAll();
+                    return;
+                }
+                double now = NowMs();
+                if (double.IsNaN(now))
+                    return;
+                if (!AutoplayEngineInput.Enabled)
+                {
+                    RdAutoplayRuntime.Tick(now, judgePass);
+                    return;
+                }
+                AutoplayEngineInput.Tick(now, judgePass);
+                if (AutoplayEngineInput.HasActed)
+                    AutoplayScoreGuard.MarkUsed();
+            }
+            catch (Exception e)
+            {
+                if (_errors < 10)
+                {
+                    _errors++;
+                    ChartExtMod.Log.Error(
+                        "[ChartExt] autoplay input failed: " + e);
+                }
+            }
         }
 
         private static void ResetCursors()
@@ -109,7 +198,6 @@ namespace InFalsusChartExt
             _cursor = 0;
             _holdCursor = 0;
             ActiveHolds.Clear();
-            _lastNow = -1e9;
         }
 
         private static void UpdateActiveHolds(double now)
@@ -145,10 +233,12 @@ namespace InFalsusChartExt
             {
                 if (!AutoplayScoreGuard.EnsureRunGuard())
                 {
-                    _enabled = false;
+                    Enabled = false;
                     ResetCursors();
                     return;
                 }
+                double now = NowMs();
+                if (double.IsNaN(now)) return;
                 List<ChartExtState.AutoplayDue> dues = ChartExtState.AutoplayDues;
                 if (dues.Count == 0) return;
                 Il2Cppifapp.Game.LogicalNotePlayer player = Il2Cppifapp.Game.LogicalNotePlayer._Qe;
@@ -157,8 +247,23 @@ namespace InFalsusChartExt
                 if (compiled == null || compiled.Pointer == IntPtr.Zero) return;
                 var records = compiled._XC;
                 if (records == null || records.Pointer == IntPtr.Zero) return;
-                double now = NowMs();
-                if (double.IsNaN(now)) return;
+                if (!AutoplayEngineInput.Enabled)
+                {
+                    for (int i = 0; i < dues.Count; i++)
+                    {
+                        ChartExtState.AutoplayDue due = dues[i];
+                        if (due.StartMs > now + 300.0) break;
+                        if (due.StartMs < now - 5000.0) continue;
+                        if (RewriteDue(due, records))
+                            AutoplayScoreGuard.MarkUsed();
+                    }
+                    return;
+                }
+                if (AutoplayEngineInput.Enabled)
+                {
+                    AutoplayEngineInput.ConsumeGroundEdges();
+                    return;
+                }
 
                 for (int i = _cursor; i < dues.Count; i++)
                 {
@@ -166,18 +271,16 @@ namespace InFalsusChartExt
                     if (due.StartMs > now + 300.0) break;
                     if (due.Type == 2) continue;
                     if (due.StartMs < now - 5000.0) continue;
-                    RewriteDue(
-                        due,
-                        records);
+                    if (RewriteDue(due, records))
+                        AutoplayScoreGuard.MarkUsed();
                 }
                 for (int i = 0; i < ActiveHolds.Count; i++)
                 {
                     ChartExtState.AutoplayDue due = ActiveHolds[i];
                     if (due.StartMs > now + 300.0)
                         continue;
-                    RewriteDue(
-                        due,
-                        records);
+                    if (RewriteDue(due, records))
+                        AutoplayScoreGuard.MarkUsed();
                 }
             }
             catch (Exception e)
@@ -186,35 +289,35 @@ namespace InFalsusChartExt
             }
         }
 
-        private static void RewriteDue(
+        private static bool RewriteDue(
             ChartExtState.AutoplayDue due,
             Il2CppSystem.Collections.Generic.Dictionary<
                 long,
                 Il2CppSystem.Memory<Il2Cpp_K._cH>> records)
         {
             if (SkyBlockJudgeRuntime.IsManagedMember(due.Id))
-                return;
+                return false;
             if (_groundOnly &&
                 due.Type != 1 && due.Type != 2)
-                return;
+                return false;
             IntPtr basePtr = NativeNoteSlotTable.SlotBase(due.Side);
-            if (basePtr == IntPtr.Zero) return;
+            if (basePtr == IntPtr.Zero) return false;
             IntPtr note = basePtr +
                 due.Position * NativeLayoutCatalog.NoteStride;
             if (Marshal.ReadInt64(
                     note + NativeLayoutCatalog.Note.Id) != due.Id)
-                return;
+                return false;
             double ee = BitConverter.Int64BitsToDouble(
                 Marshal.ReadInt64(
                     note + NativeLayoutCatalog.Note.RuntimeLead));
-            if (!records.ContainsKey(due.Id)) return;
+            if (!records.ContainsKey(due.Id)) return false;
             Il2CppSystem.Memory<Il2Cpp_K._cH> memory =
                 records[due.Id];
             if (memory._object == null ||
                 memory._object.Pointer == IntPtr.Zero)
-                return;
+                return false;
             int count = memory._length;
-            if (count <= 0 || count > 4096) return;
+            if (count <= 0 || count > 4096) return false;
             IntPtr arrayObject = memory._object.Pointer;
             int sliceIndex = memory._index;
             int arrayLength = Marshal.ReadInt32(
@@ -222,7 +325,8 @@ namespace InFalsusChartExt
                 NativeLayoutCatalog.ArrayLengthOffset);
             if (sliceIndex < 0 ||
                 sliceIndex + count > arrayLength)
-                return;
+                return false;
+            bool changed = false;
             unsafe
             {
                 for (int r = 0; r < count; r++)
@@ -241,6 +345,7 @@ namespace InFalsusChartExt
                         {
                             *(record + InteropUtil.JudgmentOffset) =
                                 ChartExtState.JudgeShiny;
+                            changed = true;
                         }
                     }
                     else
@@ -268,10 +373,12 @@ namespace InFalsusChartExt
 #endif
                             *(record + InteropUtil.JudgmentOffset) =
                                 ChartExtState.JudgeShiny;
+                            changed = true;
                         }
                     }
                 }
             }
+            return changed;
         }
 
         private static double NowMs()

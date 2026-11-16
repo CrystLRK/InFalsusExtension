@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using HarmonyLib;
+#if MELONLOADER
 using Il2Cpp_J;
-using MelonLoader;
+#elif BEPINEX
+using _J;
+#endif
 
 namespace InFalsusChartExt
 {
