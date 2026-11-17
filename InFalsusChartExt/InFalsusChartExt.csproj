@@ -13,9 +13,11 @@
     <Loader Condition="'$(Loader)' == ''">Melon</Loader>
     <DefineConstants Condition="'$(Loader)' == 'BepInEx'">$(DefineConstants);BEPINEX</DefineConstants>
     <DefineConstants Condition="'$(Loader)' != 'BepInEx'">$(DefineConstants);MELONLOADER</DefineConstants>
-    <OutputPath Condition="'$(Loader)' == 'BepInEx'">bin\$(Configuration)\BepInEx\</OutputPath>
-    <IntermediateOutputPath Condition="'$(Loader)' == 'BepInEx'">obj\BepInEx\$(Configuration)\</IntermediateOutputPath>
-    <IntermediateOutputPath Condition="'$(Loader)' != 'BepInEx'">obj\Melon\$(Configuration)\</IntermediateOutputPath>
+    <BuildRoot>$(MSBuildProjectDirectory)\..\..\build\InFalsusExtension</BuildRoot>
+    <OutputPath Condition="'$(Loader)' == 'BepInEx'">$(BuildRoot)\bin\BepInEx\$(Configuration)\</OutputPath>
+    <OutputPath Condition="'$(Loader)' != 'BepInEx'">$(BuildRoot)\bin\Melon\$(Configuration)\</OutputPath>
+    <IntermediateOutputPath Condition="'$(Loader)' == 'BepInEx'">$(BuildRoot)\obj\BepInEx\$(Configuration)\</IntermediateOutputPath>
+    <IntermediateOutputPath Condition="'$(Loader)' != 'BepInEx'">$(BuildRoot)\obj\Melon\$(Configuration)\</IntermediateOutputPath>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -23,9 +25,9 @@
     <MlDir>$(GameDir)\MelonLoader\net6</MlDir>
     <Il2CppDir>$(GameDir)\MelonLoader\Il2CppAssemblies</Il2CppDir>
     <StagedDir>$(GameDir)\MelonLoader\Dependencies\Il2CppAssemblyGenerator\Il2CppInterop\Il2CppAssemblies</StagedDir>
-    <BepInExDir Condition="'$(BepInExDir)' == ''">..\references\bepinex-6.0.0-be.793</BepInExDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">..\..\references\bepinex-6.0.0-be.793</BepInExDir>
     <BepInExCoreDir>$(BepInExDir)\BepInEx\core</BepInExCoreDir>
-    <BepInExInteropDir Condition="'$(BepInExInteropDir)' == ''">..\references\bepinex-interop-work-latest\interop</BepInExInteropDir>
+    <BepInExInteropDir Condition="'$(BepInExInteropDir)' == ''">..\..\references\bepinex-interop-work-latest\interop</BepInExInteropDir>
   </PropertyGroup>
 
   <Target Name="ValidateGameDir" BeforeTargets="ResolveReferences">
