@@ -120,9 +120,10 @@ namespace InFalsusChartExt.CustomSong.Config
                         built.Titles = titles;
                 }
                 if (TryProperty(root, "artist", out JsonElement artist))
-                    built.Artist = ReadText(artist, "pack artist");
+                    built.Artist = ReadOptionalText(
+                        artist, "pack artist");
                 if (TryProperty(root, "description", out JsonElement description))
-                    built.Description = ReadText(
+                    built.Description = ReadOptionalText(
                         description, "pack description");
                 if (TryProperty(root, "stylePackSlug", out JsonElement style))
                     built.StylePackSlug = ReadText(
@@ -377,6 +378,20 @@ namespace InFalsusChartExt.CustomSong.Config
             {
                 throw new InvalidDataException(
                     label + " must be a non-empty string");
+            }
+            return value.GetString().Trim();
+        }
+
+        private static string ReadOptionalText(
+            JsonElement value,
+            string label)
+        {
+            if (value.ValueKind == JsonValueKind.Null)
+                return string.Empty;
+            if (value.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException(
+                    label + " must be a string");
             }
             return value.GetString().Trim();
         }

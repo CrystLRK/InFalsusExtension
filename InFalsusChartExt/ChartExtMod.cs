@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 [assembly: MelonInfo(
     typeof(InFalsusChartExt.MelonChartExtMod),
     "InFalsus Chart Ext",
-    "0.2.0",
+    "0.2.0-patch1",
     "IFCE")]
 [assembly: MelonGame("lowiro", "infalsus")]
 #endif
@@ -296,7 +296,7 @@ namespace InFalsusChartExt
     [BepInPlugin(
         "com.ifce.chartext",
         "InFalsus Chart Ext",
-        "0.2.0")]
+        "0.2.0-patch1")]
     [BepInProcess("infalsus.exe")]
     public sealed class BepInExChartExtPlugin : BasePlugin
     {
