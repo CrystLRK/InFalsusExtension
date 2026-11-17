@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\build\InFalsusExtension\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>
