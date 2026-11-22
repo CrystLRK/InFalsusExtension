@@ -59,6 +59,8 @@ namespace InFalsusChartExt
         private static readonly HashSet<long>
             MeasureLineRendererPtrs =
                 new HashSet<long>();
+        private static readonly List<bool> MeasureLineIsFloor =
+            new List<bool>();
         private static Transform _notesContainer;
         private static MaterialPropertyBlock _tintBlock;
         private static MaterialPropertyBlock _clearBlock;
@@ -67,6 +69,7 @@ namespace InFalsusChartExt
         private static bool _hasTrackDisplayEvents;
         private static bool _measureLineCacheReady;
         private static int _measureLineRefreshFrame;
+        private static bool _measureLinesRestored;
         private static int _hideCursor;
         private static double _hideLastNow = double.NaN;
         private static int _lastPreparedFrame = -1;
@@ -83,6 +86,12 @@ namespace InFalsusChartExt
         private static Texture2D _screenShadowTexture;
         private static IntPtr _screenShadowCamera;
         private static Camera _screenShadowCameraView;
+        private static float _screenShadowAlpha = -1f;
+        private static int _screenShadowRefreshFrame;
+        private static IntPtr _shadowEndMasterPtr;
+        private static Transform _shadowFloorEnd;
+        private static Transform _shadowLeftEnd;
+        private static Transform _shadowRightEnd;
         private static int _nextCameraSearchFrame;
         private static int _screenShadowErrors;
         internal static void ResetForChartSwitch()
@@ -98,12 +107,14 @@ namespace InFalsusChartExt
             TrackDisplayTimeline.Clear();
             MeasureLineRenderers.Clear();
             MeasureLineRendererPtrs.Clear();
+            MeasureLineIsFloor.Clear();
             _notesContainer = null;
             _trackPointer = IntPtr.Zero;
             _generation = -1;
             _hasTrackDisplayEvents = false;
             _measureLineCacheReady = false;
             _measureLineRefreshFrame = 0;
+            _measureLinesRestored = false;
             _hideCursor = 0;
             _hideLastNow = double.NaN;
             _lastPreparedFrame = -1;
@@ -149,6 +160,12 @@ namespace InFalsusChartExt
             _screenShadowTexture = null;
             _screenShadowCamera = IntPtr.Zero;
             _screenShadowCameraView = null;
+            _screenShadowAlpha = -1f;
+            _screenShadowRefreshFrame = 0;
+            _shadowEndMasterPtr = IntPtr.Zero;
+            _shadowFloorEnd = null;
+            _shadowLeftEnd = null;
+            _shadowRightEnd = null;
             _nextCameraSearchFrame = 0;
         }
 
@@ -198,11 +215,13 @@ namespace InFalsusChartExt
             TrackDisplayTimeline.Clear();
             MeasureLineRenderers.Clear();
             MeasureLineRendererPtrs.Clear();
+            MeasureLineIsFloor.Clear();
             _hideCursor = 0;
             _hideLastNow = double.NaN;
             _hasTrackDisplayEvents = false;
             _measureLineCacheReady = false;
             _measureLineRefreshFrame = 0;
+            _measureLinesRestored = false;
 
             float trackValue = 1f;
             float trackTarget = 1f;
@@ -291,9 +310,9 @@ namespace InFalsusChartExt
                             pos * NativeLayoutCatalog.NoteStride;
                         long id = Marshal.ReadInt64(
                             note + NativeLayoutCatalog.Note.Id);
-                        bool remove = IsNoteHidden(id);
                         int noteType = Marshal.ReadInt32(
                             note + NativeLayoutCatalog.Note.Type);
+                        bool remove = IsNoteHidden(id);
                         if (noteType == 5 &&
                             HideGroupSkyColorRuntime.DebugColorEnabled)
                         {
@@ -346,6 +365,7 @@ namespace InFalsusChartExt
                     TrackRendererPtrs.Clear();
                     MeasureLineRenderers.Clear();
                     MeasureLineRendererPtrs.Clear();
+                    MeasureLineIsFloor.Clear();
                     AppliedRendererAlpha.Clear();
                     _measureLineCacheReady = false;
                     _measureLineRefreshFrame = 0;
@@ -564,6 +584,12 @@ namespace InFalsusChartExt
                 _idsReady = true;
             }
             if (_tintBlock == null || _clearBlock == null) return;
+            if (Math.Abs(_appliedAlpha - alpha) < 0.0001f &&
+                alpha >= 0.999f)
+            {
+                UpdateScreenShadow(track, alpha);
+                return;
+            }
             _appliedAlpha = alpha;
             // A renderer may be activated or receive a new native material
             // after alpha has already reached a steady value. ApplyRenderer's
@@ -571,33 +597,46 @@ namespace InFalsusChartExt
             // this loop is still required for late material ownership changes.
             for (int i = 0; i < TrackRenderers.Count; i++)
                 ApplyRenderer(TrackRenderers[i], alpha);
-            ApplyMeasureLines(alpha);
+            ApplyMeasureLines(track, alpha);
             UpdateScreenShadow(track, alpha);
         }
 
-        private static void ApplyMeasureLines(float alpha)
+        private static void ApplyMeasureLines(
+            Il2Cppifapp.Game.Scenes.Game.Track track,
+            float alpha)
         {
             if (_notesContainer == null || _notesContainer.Pointer == IntPtr.Zero) return;
             int frame = Time.frameCount;
-            if (!_measureLineCacheReady ||
-                frame >= _measureLineRefreshFrame)
+            if (!_measureLineCacheReady)
             {
                 RebuildMeasureLineCache();
-                _measureLineRefreshFrame = frame + 60;
+                _measureLineRefreshFrame = frame + 120;
             }
+            else if (MeasureLineRenderers.Count == 0 &&
+                     frame >= _measureLineRefreshFrame)
+            {
+                // Retry only while the pool has not appeared yet; once the
+                // fixed measure-line pool is cached, do not rescan the whole
+                // notes hierarchy every few frames (each child.name allocates).
+                RebuildMeasureLineCache();
+                _measureLineRefreshFrame = frame + 120;
+            }
+            if (_measureLinesRestored) return;
             for (int i = 0; i < MeasureLineRenderers.Count; i++)
             {
                 MeshRenderer renderer = MeasureLineRenderers[i];
                 if (renderer == null || renderer.Pointer == IntPtr.Zero)
                     continue;
-                ApplyRenderer(renderer, alpha);
+                RestoreRendererMaterial(renderer);
             }
+            _measureLinesRestored = true;
         }
 
         private static void RebuildMeasureLineCache()
         {
             MeasureLineRenderers.Clear();
             MeasureLineRendererPtrs.Clear();
+            MeasureLineIsFloor.Clear();
             int count;
             try { count = _notesContainer.childCount; } catch { return; }
             for (int i = 0; i < count; i++)
@@ -627,7 +666,13 @@ namespace InFalsusChartExt
                         continue;
                     if (MeasureLineRendererPtrs.Add(
                             renderer.Pointer.ToInt64()))
+                    {
                         MeasureLineRenderers.Add(renderer);
+                        MeasureLineIsFloor.Add(
+                            name.IndexOf(
+                                "Floor",
+                                StringComparison.OrdinalIgnoreCase) >= 0);
+                    }
                 }
             }
             _measureLineCacheReady = true;
@@ -666,6 +711,26 @@ namespace InFalsusChartExt
                 if (renderer.sharedMaterial.Pointer != faded.Pointer)
                     renderer.sharedMaterial = faded;
                 AppliedRendererAlpha[rendererId] = alpha;
+            }
+            catch { }
+        }
+
+        private static void RestoreRendererMaterial(MeshRenderer renderer)
+        {
+            if (renderer == null || renderer.Pointer == IntPtr.Zero)
+                return;
+            try
+            {
+                long rendererId = renderer.Pointer.ToInt64();
+                if (!OriginalMaterialByRenderer.TryGetValue(
+                        rendererId, out Material source))
+                    return;
+                if (source != null && source.Pointer != IntPtr.Zero &&
+                    (renderer.sharedMaterial == null ||
+                     renderer.sharedMaterial.Pointer != source.Pointer))
+                    renderer.sharedMaterial = source;
+                OriginalMaterialByRenderer.Remove(rendererId);
+                AppliedRendererAlpha.Remove(rendererId);
             }
             catch { }
         }
@@ -795,6 +860,20 @@ namespace InFalsusChartExt
         {
             try
             {
+                if (alpha >= 0.999f)
+                {
+                    if (_screenShadowRenderer != null)
+                        _screenShadowRenderer.enabled = false;
+                    return;
+                }
+                if (_screenShadowRenderer != null)
+                    _screenShadowRenderer.enabled = true;
+                int frame = Time.frameCount;
+                if (Math.Abs(_screenShadowAlpha - alpha) < 0.0001f &&
+                    frame < _screenShadowRefreshFrame)
+                    return;
+                _screenShadowAlpha = alpha;
+                _screenShadowRefreshFrame = frame + 4;
                 Camera camera = ResolveGameplayCamera();
                 if (camera == null) return;
                 float depth = ComputeTrackFarDepth(camera) + 0.75f;
@@ -853,15 +932,19 @@ namespace InFalsusChartExt
                     track.Pointer + NativeLayoutCatalog.Track.MasterScene);
                 if (masterPtr != IntPtr.Zero)
                 {
-                    Transform master = new Transform(masterPtr);
-                    Transform floorEnd = master.Find("TRACK_FLOOR_END");
-                    Transform leftEnd = master.Find("TRACK_LEFT_END");
-                    Transform rightEnd = master.Find("TRACK_RIGHT_END");
+                    if (masterPtr != _shadowEndMasterPtr)
+                    {
+                        _shadowEndMasterPtr = masterPtr;
+                        Transform master = new Transform(masterPtr);
+                        _shadowFloorEnd = master.Find("TRACK_FLOOR_END");
+                        _shadowLeftEnd = master.Find("TRACK_LEFT_END");
+                        _shadowRightEnd = master.Find("TRACK_RIGHT_END");
+                    }
                     bool found = false;
                     float lowest = 1f;
-                    SampleTrackEndY(camera, floorEnd, ref found, ref lowest);
-                    SampleTrackEndY(camera, leftEnd, ref found, ref lowest);
-                    SampleTrackEndY(camera, rightEnd, ref found, ref lowest);
+                    SampleTrackEndY(camera, _shadowFloorEnd, ref found, ref lowest);
+                    SampleTrackEndY(camera, _shadowLeftEnd, ref found, ref lowest);
+                    SampleTrackEndY(camera, _shadowRightEnd, ref found, ref lowest);
                     if (found) spawnY = lowest;
                 }
             }

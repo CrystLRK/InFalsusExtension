@@ -58,6 +58,23 @@ namespace InFalsusChartExt
         /// <summary>全部 skyarea 槽位（生命周期探针用：消费位/生成列表/池对象激活状态）。</summary>
         internal static readonly List<SideSlot> SkyAreaSlots = new List<SideSlot>();
 
+        /// <summary>
+        /// 负流速 Hold/SkyArea 候选槽位。编译期只记录 side/position/type/
+        /// group/时间；运行期再按组 W(t) 判断是否接管视觉。
+        /// </summary>
+        internal sealed class NegativeSlot
+        {
+            public int Side;
+            public int Position;
+            public int Type;
+            public int Group;
+            public long Id;
+            public int StartMs;
+            public int EndMs;
+        }
+        internal static readonly List<NegativeSlot> NegativeSpeedSlots =
+            new List<NegativeSlot>();
+
         /// <summary>timinggroup：需要按组时间线接管视觉的音符槽位。</summary>
         internal sealed class GroupSlot
         {
@@ -66,6 +83,8 @@ namespace InFalsusChartExt
             public long Id;
             public int Group;
             public int Type;
+            public int StartMs;
+            public int EndMs;
             public IntPtr CompiledOwner;
             public int CompileGeneration;
         }
@@ -136,9 +155,23 @@ namespace InFalsusChartExt
             public double TimeMs;
             public int Group;
             public double Mult;
+            /// <summary>
+            /// timinggroup 的组 BPM（type5 事件 value2 高 32 位的 float）。
+            /// 0 表示该条事件未携带 BPM，运行期回落到原版 chart 基础 BPM。
+            /// 只用于长音符 record 密度，不参与流速。
+            /// </summary>
+            public double Bpm;
             public int SourceOrder;
         }
         internal static readonly List<GroupSpeed> GroupSpeeds = new List<GroupSpeed>();
+
+        /// <summary>
+        /// 每个 timinggroup 的时间线起点（组内第一个 note 的 start）。
+        /// 组时间线只在 [Origin, ∞) 有定义；早于 Origin 的查询由
+        /// SpeedCurve 的既有外推规则处理。
+        /// </summary>
+        internal static readonly Dictionary<int, double> GroupOrigins =
+            new Dictionary<int, double>();
 
         /// <summary>autoplay：所有可判定音符（noinput/bomb 除外）的 (起始时间, id, 槽位)。
         /// 编译期锁存、按时间排序；运行期用它做窗口内的记录判定改写。</summary>
@@ -208,6 +241,8 @@ namespace InFalsusChartExt
                 new Dictionary<long, int>();
             internal readonly List<GroupSpeed> GroupSpeeds =
                 new List<GroupSpeed>();
+            internal readonly Dictionary<int, double> GroupOrigins =
+                new Dictionary<int, double>();
             internal readonly List<AutoplayDue> AutoplayDues =
                 new List<AutoplayDue>();
             internal readonly List<SpeedEvent> SpeedEvents =
@@ -304,6 +339,8 @@ namespace InFalsusChartExt
             foreach (var pair in NoteTimingGroup)
                 snapshot.NoteTimingGroup[pair.Key] = pair.Value;
             CopyGroupSpeeds(GroupSpeeds, snapshot.GroupSpeeds);
+            foreach (var pair in GroupOrigins)
+                snapshot.GroupOrigins[pair.Key] = pair.Value;
             CopyAutoplayDues(AutoplayDues, snapshot.AutoplayDues);
             CopySpeedEvents(SpeedEvents, snapshot.SpeedEvents);
             snapshot.SpawnKeysNow.UnionWith(SpawnKeysNow);
@@ -349,6 +386,9 @@ namespace InFalsusChartExt
                 NoteTimingGroup[pair.Key] = pair.Value;
             GroupSpeeds.Clear();
             CopyGroupSpeeds(snapshot.GroupSpeeds, GroupSpeeds);
+            GroupOrigins.Clear();
+            foreach (var pair in snapshot.GroupOrigins)
+                GroupOrigins[pair.Key] = pair.Value;
             AutoplayDues.Clear();
             CopyAutoplayDues(
                 snapshot.AutoplayDues, AutoplayDues);
@@ -486,6 +526,7 @@ namespace InFalsusChartExt
                     TimeMs = item.TimeMs,
                     Group = item.Group,
                     Mult = item.Mult,
+                    Bpm = item.Bpm,
                     SourceOrder = item.SourceOrder,
                 });
             }
@@ -541,6 +582,7 @@ namespace InFalsusChartExt
             SpawnKeysNow.Clear();
             SkyAreaSlots.Clear();
             GroupedSlots.Clear();
+            NegativeSpeedSlots.Clear();
             ShowTextEntries.Clear();
             HasAudioOffset = false;
             AudioOffsetMs = 0;
@@ -552,6 +594,7 @@ namespace InFalsusChartExt
             NoClipTimingGroups.Clear();
             NoteTimingGroup.Clear();
             GroupSpeeds.Clear();
+            GroupOrigins.Clear();
             AutoplayDues.Clear();
             ExpectedSkyAreaCount = 0;
         }

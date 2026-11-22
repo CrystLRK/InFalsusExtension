@@ -37,6 +37,14 @@ namespace InFalsusChartExt
         private static string _chartKey;
         private static int _chartGeneration = -1;
         private static int _errors;
+        private static readonly Dictionary<int, double> GroupVelocityCache =
+            new Dictionary<int, double>();
+        private static readonly Dictionary<int, double> GroupNowVisualCache =
+            new Dictionary<int, double>();
+        private static int _groupCacheFrame = -1;
+        private static int _lastSpawnFlipFrame = -1;
+        private static readonly List<long> DeadEntryIds =
+            new List<long>();
 #if IFCE_DIAGNOSTICS
         private static readonly HashSet<long> DiagnosticEntries =
             new HashSet<long>();
@@ -69,6 +77,8 @@ namespace InFalsusChartExt
             public float RootY;
             public Quaternion RootRot;
             public Vector3 RootScale;
+            public bool Visible;
+            public int EndMs;
             public readonly List<Material> OwnedMaterials =
                 new List<Material>(4);
         }
@@ -117,36 +127,96 @@ namespace InFalsusChartExt
             }
         }
 
-        internal static void ApplyFlip(bool spawnPhase)
+        internal static void ApplyFlip(
+            bool spawnPhase, IntPtr trackPtr = default)
         {
             try
             {
+                if (spawnPhase)
+                {
+                    int frame = Time.frameCount;
+                    if (_lastSpawnFlipFrame == frame)
+                        return;
+                    _lastSpawnFlipFrame = frame;
+                }
                 FlipTargets.Clear();
                 var slots = ChartExtState.GroupedSlots;
+                double nowMs = spawnPhase
+                    ? TimingGroupRuntime.CurrentMs()
+                    : double.NaN;
+                double windowEnd = spawnPhase
+                    ? nowMs + (trackPtr != IntPtr.Zero
+                        ? VisualSpawnTiming.MaxLeadMs(trackPtr)
+                        : 4000.0) + 1000.0
+                    : double.NaN;
+                double windowStart = spawnPhase
+                    ? nowMs - 3000.0
+                    : double.NaN;
+                if (!spawnPhase)
+                {
+                    // A chart recompile can invalidate the locked slot
+                    // identity after a note was flipped to type 6. Restore
+                    // by raw side/position first; otherwise the note stays
+                    // hidden forever because the identity check skips it.
+                    for (int i = 0; i < slots.Count; i++)
+                    {
+                        var s = slots[i];
+                        if (s.Type != 1 ||
+                            ChartExtState.BombIds.Contains(s.Id))
+                            continue;
+                        RestoreRawSlotType(s);
+                    }
+                }
                 for (int i = 0; i < slots.Count; i++)
                 {
                     var s = slots[i];
                     if (s.Type != 1) continue;
+                    if (spawnPhase &&
+                        (s.StartMs > windowEnd ||
+                         s.EndMs < windowStart))
+                        continue;
                     if (!TimingGroupRuntime.TryResolveGroupedSlot(
                             s, out IntPtr note, out int currentType, true))
                     {
-                        // The whole flip is one transaction. If any locked slot
-                        // now belongs to another compile/note, do not risk writes
-                        // to the remaining slots either.
-                        FlipTargets.Clear();
-                        LogFlipIdentityMismatch(s);
-                        return;
+                        // Owner/generation can change during a chart rebuild.
+                        // If the raw slot still holds the same note id, hide
+                        // it by position; otherwise leave it to native.
+                        if (!TryResolveRawSlot(
+                                s,
+                                out note,
+                                out currentType,
+                                out bool sameId) ||
+                            !sameId)
+                        {
+                            LogFlipIdentityMismatch(s);
+                            continue;
+                        }
                     }
                     if (ChartExtState.BombIds.Contains(s.Id))
                         continue;
+                    if (spawnPhase)
+                    {
+                        int lane = Marshal.ReadInt32(
+                            note + NativeLayoutCatalog.Note.Lane);
+                        GameObject template = lane == 0
+                            ? _sideLeftTemplate
+                            : lane == 5
+                                ? _sideRightTemplate
+                                : _template;
+                        if (template == null)
+                        {
+                            // Never hide the native note when the replacement
+                            // template for this lane is not ready.
+                            continue;
+                        }
+                    }
                     int targetType = spawnPhase ? VisibleType : s.Type;
                     if (currentType == targetType) continue;
                     if ((spawnPhase && currentType != s.Type) ||
                         (!spawnPhase && currentType != VisibleType))
                     {
-                        FlipTargets.Clear();
                         LogFlipIdentityMismatch(s);
-                        return;
+                        continue;
                     }
                     FlipTargets.Add(new FlipTarget(
                         note + NativeLayoutCatalog.Note.Type,
@@ -213,6 +283,62 @@ namespace InFalsusChartExt
                 $"owner/gen changed");
         }
 
+        private static void RestoreRawSlotType(
+            ChartExtState.GroupSlot slot)
+        {
+            try
+            {
+                IntPtr basePtr =
+                    NativeNoteSlotTable.SlotBase(slot.Side);
+                if (basePtr == IntPtr.Zero)
+                    return;
+                IntPtr note = basePtr +
+                    slot.Position * NativeLayoutCatalog.NoteStride;
+                if (Marshal.ReadInt32(
+                        note + NativeLayoutCatalog.Note.Type) ==
+                    VisibleType)
+                {
+                    Marshal.WriteInt32(
+                        note + NativeLayoutCatalog.Note.Type,
+                        1);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool TryResolveRawSlot(
+            ChartExtState.GroupSlot slot,
+            out IntPtr note,
+            out int currentType,
+            out bool sameId)
+        {
+            note = IntPtr.Zero;
+            currentType = 0;
+            sameId = false;
+            try
+            {
+                if (slot.Side < 0 || slot.Position < 0)
+                    return false;
+                IntPtr basePtr =
+                    NativeNoteSlotTable.SlotBase(slot.Side);
+                if (basePtr == IntPtr.Zero)
+                    return false;
+                note = basePtr +
+                    slot.Position * NativeLayoutCatalog.NoteStride;
+                sameId = Marshal.ReadInt64(
+                    note + NativeLayoutCatalog.Note.Id) == slot.Id;
+                currentType = Marshal.ReadInt32(
+                    note + NativeLayoutCatalog.Note.Type);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         internal static void Tick(Il2Cppifapp.Game.Scenes.Game.Track track)
         {
             try
@@ -248,12 +374,24 @@ namespace InFalsusChartExt
                     return;
                 double maxLeadMs = frame.MaxLeadMs;
                 double nowMs = frame.NowMs;
+                double windowEnd = nowMs + maxLeadMs + 1000.0;
+                double windowStart = nowMs - 3000.0;
+                int frameIndex = Time.frameCount;
+                if (_groupCacheFrame != frameIndex)
+                {
+                    _groupCacheFrame = frameIndex;
+                    GroupVelocityCache.Clear();
+                    GroupNowVisualCache.Clear();
+                }
 
                 var slots = ChartExtState.GroupedSlots;
                 for (int i = 0; i < slots.Count; i++)
                 {
                     var slot = slots[i];
                     if (slot.Type != 1) continue;
+                    if (slot.StartMs > windowEnd ||
+                        slot.EndMs < windowStart)
+                        continue;
                     if (!TimingGroupRuntime.TryResolveGroupedSlot(
                             slot, out IntPtr note, out _, true))
                         continue;
@@ -264,24 +402,71 @@ namespace InFalsusChartExt
 
                     int be = Marshal.ReadInt32(
                         note + NativeLayoutCatalog.Note.StartMs);
+                    int end = Marshal.ReadInt32(
+                        note + NativeLayoutCatalog.Note.EndMs);
                     int lane = Marshal.ReadInt32(
                         note + NativeLayoutCatalog.Note.Lane);
                     int width = Marshal.ReadInt32(
                         note + NativeLayoutCatalog.Note.PackedStartWidth);
                     if (lane < 0 || lane > 5) continue;
-                    double lead = TimingGroupRuntime.VisualTimeMs(slot.Group, be) -
-                                  TimingGroupRuntime.VisualTimeMs(slot.Group, nowMs);
+                    if (!GroupNowVisualCache.TryGetValue(
+                            slot.Group, out double nowVisual))
+                    {
+                        nowVisual = TimingGroupRuntime.VisualTimeMs(
+                            slot.Group, nowMs);
+                        GroupNowVisualCache[slot.Group] = nowVisual;
+                    }
+                    double lead = TimingGroupRuntime.VisualTimeMs(
+                        slot.Group, be) - nowVisual;
                     bool consumed = Marshal.ReadByte(
                         note + NativeLayoutCatalog.Note.Consumed) != 0;
                     bool groupHidden =
                         SceneControlRuntime.IsNoteHidden(id);
-                    bool visible = !groupHidden && lead <= maxLeadMs &&
-                        !consumed && lead >= 0.0;
+                    // Negative-speed groups approach the line with a negative
+                    // lead. Pick the approaching side from the local group
+                    // velocity so notes still disappear after crossing.
+                    double alignment = Math.Abs(lead);
+                    if (!GroupVelocityCache.TryGetValue(
+                            slot.Group, out double groupVelocity))
+                    {
+                        groupVelocity =
+                            TimingGroupRuntime.DebugWGroup(
+                                slot.Group, nowMs) -
+                            TimingGroupRuntime.DebugWGroup(
+                                slot.Group, nowMs - 1.0);
+                        GroupVelocityCache[slot.Group] = groupVelocity;
+                    }
+                    bool approaching = groupVelocity >= 0.0
+                        ? lead >= 0.0
+                        : lead <= 0.0;
+                    bool negativeGroup = groupVelocity < 0.0;
+                    // 该音符到达前 W(t) 会先越过 W(be) 再折返时，物件会提前
+                    // 过线、后退、再回到判定线。此时只显示“速度为负且位于
+                    // 近侧”的接近段，避免远端驶来与近侧折返叠成两段运动。
+                    bool crossesBack =
+                        TimingGroupRuntime.CrossesBackAfter(
+                            slot.Group, nowMs, be);
+                    bool visible = !groupHidden &&
+                        alignment <= maxLeadMs && !consumed &&
+                        (crossesBack
+                            ? negativeGroup && lead <= 0.0
+                            : approaching);
                     if (!visible)
                     {
                         if (Entries.TryGetValue(id, out VisualEntry hidden))
                         {
-                            try { hidden.Go.SetActive(false); } catch { }
+                            if (hidden.Visible)
+                            {
+                                try { hidden.Go.SetActive(false); }
+                                catch { }
+                                hidden.Visible = false;
+                            }
+                            hidden.EndMs = end;
+                            if (nowMs > end + 2000.0)
+                            {
+                                DestroyEntry(hidden);
+                                Entries.Remove(id);
+                            }
                         }
                         continue;
                     }
@@ -310,8 +495,19 @@ namespace InFalsusChartExt
                         }
 #endif
                     }
+                    e.EndMs = end;
                     Transform tr = e.Go.transform;
+                    // Negative speed starts on the player-near side and moves
+                    // toward the far side. Keep the signed Z, but clamp the
+                    // near end so it stays in front of the camera.
                     double distance = frame.Distance(lead);
+                    if (negativeGroup && distance < 0.0)
+                    {
+                        double nearLimit =
+                            -frame.Distance(maxLeadMs * 0.5);
+                        if (nearLimit < 0.0 && distance < nearLimit)
+                            distance = nearLimit;
+                    }
                     float normalized =
                         VisualTapNoteInstance.NormalizedDistance(
                             in frame,
@@ -358,7 +554,31 @@ namespace InFalsusChartExt
                     float alpha = frame.Alpha(lead, false);
                     if (e.Note != null && e.Note.Pointer != IntPtr.Zero)
                         e.Note._ybA(alpha);
-                    if (!e.Go.activeSelf) e.Go.SetActive(true);
+                    if (!e.Visible)
+                    {
+                        e.Go.SetActive(true);
+                        e.Visible = true;
+                    }
+                }
+
+                // Entries whose slot fell out of the window are no longer
+                // visited above; prune them after their own end time.
+                if ((frameIndex & 31) == 0)
+                {
+                    DeadEntryIds.Clear();
+                    foreach (var pair in Entries)
+                    {
+                        if (nowMs > pair.Value.EndMs + 2000.0)
+                            DeadEntryIds.Add(pair.Key);
+                    }
+                    for (int i = 0; i < DeadEntryIds.Count; i++)
+                    {
+                        long id = DeadEntryIds[i];
+                        if (!Entries.TryGetValue(id, out VisualEntry dead))
+                            continue;
+                        DestroyEntry(dead);
+                        Entries.Remove(id);
+                    }
                 }
             }
             catch (Exception e)
@@ -376,6 +596,24 @@ namespace InFalsusChartExt
             _track = IntPtr.Zero;
             DestroyEntries();
             DestroyTemplates();
+        }
+
+        /// <summary>
+        /// Restore native visibility type after the render phase. A failed
+        /// per-slot flip/restore transaction must not leave a tap at type 6,
+        /// which is render-only and therefore not judged.
+        /// </summary>
+        internal static void RestoreAllVisualTypes()
+        {
+            var slots = ChartExtState.GroupedSlots;
+            for (int i = 0; i < slots.Count; i++)
+            {
+                var slot = slots[i];
+                if (slot.Type != 1 ||
+                    ChartExtState.BombIds.Contains(slot.Id))
+                    continue;
+                RestoreRawSlotType(slot);
+            }
         }
 
         private static VisualEntry CreateEntry(int lane)
@@ -422,6 +660,7 @@ namespace InFalsusChartExt
                     RootY = tr.localPosition.y,
                     RootRot = tr.localRotation,
                     RootScale = tr.localScale,
+                    Visible = true,
                 };
                 result.OwnedMaterials.AddRange(materials);
                 materials = null;
@@ -598,13 +837,21 @@ namespace InFalsusChartExt
         private static void DestroyEntries()
         {
             foreach (var e in Entries.Values)
-            {
-                DestroyMaterials(e.OwnedMaterials);
-                e.OwnedMaterials.Clear();
-                try { if (e.Go != null) UnityEngine.Object.Destroy(e.Go); }
-                catch { }
-            }
+                DestroyEntry(e);
             Entries.Clear();
+        }
+
+        private static void DestroyEntry(VisualEntry entry)
+        {
+            if (entry == null) return;
+            DestroyMaterials(entry.OwnedMaterials);
+            entry.OwnedMaterials.Clear();
+            try
+            {
+                if (entry.Go != null)
+                    UnityEngine.Object.Destroy(entry.Go);
+            }
+            catch { }
         }
 
         private static void DestroyTemplates()

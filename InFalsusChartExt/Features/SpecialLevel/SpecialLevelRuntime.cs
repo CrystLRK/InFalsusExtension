@@ -43,6 +43,7 @@ namespace InFalsusChartExt
             new Dictionary<IntPtr, FontState>();
         private static readonly Dictionary<IntPtr, string> Applied =
             new Dictionary<IntPtr, string>();
+        private static Il2CppFastText.FastText _lastDonor;
         private sealed class PendingLevel
         {
             public SongSelectDifficultyButton Button;
@@ -369,21 +370,37 @@ namespace InFalsusChartExt
             bool force = false)
         {
             if (text == null || text.Pointer == IntPtr.Zero) return;
+            if (donor == null)
+                donor = _lastDonor;
             SongChartInfo chart = ChartOf(song, slot);
             string special = SpecialOf(song, slot);
             if (special == null)
             {
+                string restoreRating = chart != null
+                    ? chart.Rating.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    : null;
                 if (Applied.TryGetValue(
                         text.Pointer, out string previousText))
                 {
+                    // Prefer the current difficulty's own rating. A reused
+                    // text component may have captured null/empty before the
+                    // label was initialized; restoring "" made the pack card
+                    // show nothing at all.
+                    string restore = restoreRating;
+                    if (string.IsNullOrEmpty(restore))
+                        restore = previousText;
                     try
                     {
-                        text.SetTextNonLocalized(
-                            previousText ?? string.Empty,
-                            Il2CppFastText.FastText.UpdateType.Default);
-                        text.EnsureDirtyFlagsProcessed();
-                        if (constrained != null)
-                            constrained._qQA();
+                        if (!string.IsNullOrEmpty(restore))
+                        {
+                            text.SetTextNonLocalized(
+                                restore,
+                                Il2CppFastText.FastText.UpdateType.Default);
+                            text.EnsureDirtyFlagsProcessed();
+                            if (constrained != null)
+                                constrained._qQA();
+                        }
                     }
                     catch (Exception e)
                     {
@@ -417,7 +434,10 @@ namespace InFalsusChartExt
             }
 
             if (HasNonAscii(special) && donor != null)
+            {
                 SwapFont(text, donor);
+                _lastDonor = donor;
+            }
             else
                 RestoreFont(text);
 
@@ -565,7 +585,7 @@ namespace InFalsusChartExt
                         if (names[i] != null) return names[i];
             }
             catch { }
-            return null;
+            return _lastDonor;
         }
 
         private static Il2CppFastText.FastText DonorFromHud(
@@ -665,7 +685,7 @@ namespace InFalsusChartExt
                             return artists[i]._i;
             }
             catch { }
-            return null;
+            return _lastDonor;
         }
 
         private static void ApplyPackCard(
@@ -674,11 +694,34 @@ namespace InFalsusChartExt
             int slot)
         {
             if (card == null) return;
+            int effectiveSlot = EffectiveSlot(song, slot);
             C2D rating = null;
+            C2D constrained = null;
             try { rating = card.ratingText; } catch { }
-            if (rating == null) return;
-            ApplyConstrained(
-                rating, song, slot, DonorFromPackCard(card), true);
+            try { constrained = card.constrained2D; } catch { }
+            Il2CppFastText.FastText donor = DonorFromPackCard(card);
+            if (rating != null)
+                ApplyConstrained(
+                    rating, song, effectiveSlot, donor, true);
+            if (constrained != null &&
+                (rating == null ||
+                 constrained.Pointer != rating.Pointer))
+                ApplyConstrained(
+                    constrained, song, effectiveSlot, donor, true);
+        }
+
+        private static int EffectiveSlot(SongInfo song, int slot)
+        {
+            SongChartInfo current = ChartOf(song, slot);
+            if (current != null && current.Available)
+                return slot;
+            for (int i = 0; i < 4; i++)
+            {
+                SongChartInfo candidate = ChartOf(song, i);
+                if (candidate != null && candidate.Available)
+                    return i;
+            }
+            return slot;
         }
 
         private static void RefreshScene(SongSelectScene scene)

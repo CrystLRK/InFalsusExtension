@@ -32,6 +32,13 @@ namespace InFalsusChartExt
         private static readonly List<ChartExtState.AutoplayDue>
             ActiveHolds =
                 new List<ChartExtState.AutoplayDue>();
+        private static readonly HashSet<long> AutoplaySkyHits =
+            new HashSet<long>();
+        private static readonly HashSet<long> AutoplaySkyPresented =
+            new HashSet<long>();
+        private static readonly List<(long GlobalIndex, double Relative)>
+            ChangedSkyRecords =
+                new List<(long GlobalIndex, double Relative)>(16);
         private static int _errors;
 #if IFCE_DIAGNOSTICS
         private static int _r7LateWrites;
@@ -198,6 +205,10 @@ namespace InFalsusChartExt
             _cursor = 0;
             _holdCursor = 0;
             ActiveHolds.Clear();
+            AutoplaySkyHits.Clear();
+            AutoplaySkyPresented.Clear();
+            ChangedSkyRecords.Clear();
+            SkyBlockFeedbackRuntime.SetAutoplaySkyHoldActive(false);
         }
 
         private static void UpdateActiveHolds(double now)
@@ -249,14 +260,62 @@ namespace InFalsusChartExt
                 if (records == null || records.Pointer == IntPtr.Zero) return;
                 if (!AutoplayEngineInput.Enabled)
                 {
+                    bool skyHoldActive = false;
                     for (int i = 0; i < dues.Count; i++)
                     {
                         ChartExtState.AutoplayDue due = dues[i];
                         if (due.StartMs > now + 300.0) break;
+                        bool sky =
+                            due.Type == 5 &&
+                            !_groundOnly &&
+                            !SkyBlockJudgeRuntime.IsManagedMember(due.Id);
+                        if (sky &&
+                            now >= due.StartMs &&
+                            now < due.EndMs)
+                            skyHoldActive = true;
                         if (due.StartMs < now - 5000.0) continue;
-                        if (RewriteDue(due, records))
+                        ChangedSkyRecords.Clear();
+                        bool changed = RewriteDue(
+                            due, records, ChangedSkyRecords);
+                        if (changed)
                             AutoplayScoreGuard.MarkUsed();
+                        if (sky && changed)
+                        {
+                            MarkNoteConsumed(due);
+                            Il2Cpp_E._VD judge =
+                                Il2Cppifapp.Game.Scenes.GameScene._DN;
+                            if (SkyBlockJudgeRuntime
+                                    .EnsureNativePresentationQueue(judge))
+                            {
+                                for (int ci = 0;
+                                     ci < ChangedSkyRecords.Count;
+                                     ci++)
+                                {
+                                    var item =
+                                        ChangedSkyRecords[ci];
+                                    long key =
+                                        item.GlobalIndex;
+                                    if (!AutoplaySkyPresented.Add(key))
+                                        continue;
+                                    SkyBlockJudgeRuntime
+                                        .EnqueuePresentation(
+                                            due.Id,
+                                            item.GlobalIndex,
+                                            SkyPresentationPosition(
+                                                due,
+                                                item.Relative));
+                                }
+                            }
+                        }
+                        if (sky &&
+                            changed &&
+                            now >= due.StartMs &&
+                            now <= due.StartMs + 200.0 &&
+                            AutoplaySkyHits.Add(due.Id))
+                            SkyBlockFeedbackRuntime.PlayHit();
                     }
+                    SkyBlockFeedbackRuntime.SetAutoplaySkyHoldActive(
+                        skyHoldActive);
                     return;
                 }
                 if (AutoplayEngineInput.Enabled)
@@ -293,7 +352,8 @@ namespace InFalsusChartExt
             ChartExtState.AutoplayDue due,
             Il2CppSystem.Collections.Generic.Dictionary<
                 long,
-                Il2CppSystem.Memory<Il2Cpp_K._cH>> records)
+                Il2CppSystem.Memory<Il2Cpp_K._cH>> records,
+            List<(long GlobalIndex, double Relative)> changedRecords = null)
         {
             if (SkyBlockJudgeRuntime.IsManagedMember(due.Id))
                 return false;
@@ -345,6 +405,13 @@ namespace InFalsusChartExt
                         {
                             *(record + InteropUtil.JudgmentOffset) =
                                 ChartExtState.JudgeShiny;
+                            if (changedRecords != null)
+                                changedRecords.Add((
+                                    *(long*)record,
+                                    BitConverter.Int64BitsToDouble(
+                                        *(long*)(record +
+                                            NativeLayoutCatalog.Record
+                                                .RelativeTime))));
                             changed = true;
                         }
                     }
@@ -356,7 +423,8 @@ namespace InFalsusChartExt
                                     NativeLayoutCatalog.Record
                                         .RelativeTime));
                         double v25 = rel + ee;
-                        if (v25 <= -150.0 &&
+                        // 兜底窗口 0ms：到点即改写（其余逻辑保持原样）。
+                        if (v25 <= 0.0 &&
                             judgment != ChartExtState.JudgeShiny)
                         {
 #if IFCE_DIAGNOSTICS
@@ -379,6 +447,66 @@ namespace InFalsusChartExt
                 }
             }
             return changed;
+        }
+
+        private static UnityEngine.Vector3 SkyPresentationPosition(
+            ChartExtState.AutoplayDue due,
+            double relativeMs)
+        {
+            IntPtr basePtr =
+                NativeNoteSlotTable.SlotBase(due.Side);
+            if (basePtr == IntPtr.Zero)
+                return default;
+            IntPtr note = new IntPtr(
+                basePtr.ToInt64() +
+                (long)due.Position *
+                NativeLayoutCatalog.NoteStride);
+            float startCenter = BitConverter.Int32BitsToSingle(
+                Marshal.ReadInt32(
+                    note + NativeLayoutCatalog.Note.StartCenter));
+            float endCenter = BitConverter.Int32BitsToSingle(
+                Marshal.ReadInt32(
+                    note + NativeLayoutCatalog.Note.EndCenter));
+            int startMs = Marshal.ReadInt32(
+                note + NativeLayoutCatalog.Note.StartMs);
+            int endMs = Marshal.ReadInt32(
+                note + NativeLayoutCatalog.Note.EndMs);
+            double t = endMs > startMs
+                ? Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        (startMs + relativeMs - startMs) /
+                        (double)(endMs - startMs)))
+                : 0.0;
+            float center = (float)(
+                startCenter +
+                (endCenter - startCenter) * t);
+            Il2Cppifapp.Game.Scenes.Game.Track track =
+                Il2Cppifapp.Game.Scenes.Game.Track._a;
+            return track is null ||
+                   track.Pointer == IntPtr.Zero
+                ? default
+                : track._dBA(center);
+        }
+
+        private static void MarkNoteConsumed(
+            ChartExtState.AutoplayDue due)
+        {
+            IntPtr basePtr =
+                NativeNoteSlotTable.SlotBase(due.Side);
+            if (basePtr == IntPtr.Zero)
+                return;
+            IntPtr note = new IntPtr(
+                basePtr.ToInt64() +
+                (long)due.Position *
+                NativeLayoutCatalog.NoteStride);
+            if (Marshal.ReadInt64(
+                    note + NativeLayoutCatalog.Note.Id) != due.Id)
+                return;
+            Marshal.WriteByte(
+                note + NativeLayoutCatalog.Note.Consumed,
+                1);
         }
 
         private static double NowMs()

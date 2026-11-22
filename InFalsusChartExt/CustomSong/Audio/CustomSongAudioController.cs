@@ -29,10 +29,14 @@ namespace InFalsusChartExt.CustomSong.Audio
             new List<DeferredRoute>();
         private static readonly List<OwnedAudio> Owned =
             new List<OwnedAudio>();
+        private static readonly List<OwnedAudio> Detached =
+            new List<OwnedAudio>();
         private static IntPtr _systemPointer;
         private static int _ownedErrors;
         private static int _pauseErrors;
         private static bool _shutdownRequested;
+        private static bool _sceneUnloadPending;
+        private static bool _isPlayingUnavailable;
         [ThreadStatic]
         private static Stack<Route> _routes;
 #if IFCE_DIAGNOSTICS
@@ -41,12 +45,23 @@ namespace InFalsusChartExt.CustomSong.Audio
 #endif
         internal static void Reset()
         {
+            for (int i = 0; i < Waiting.Count; i++)
+            {
+                if (Waiting[i].Selection)
+                    SilenceTemplateChannel(
+                        Waiting[i].Controller);
+            }
+            for (int i = 0; i < Deferred.Count; i++)
+                SilenceTemplateChannel(
+                    Deferred[i].Controller);
             Waiting.Clear();
             Deferred.Clear();
             _routes?.Clear();
             _ownedErrors = 0;
             _pauseErrors = 0;
             ReleaseAllOwned();
+            ReleaseDetached();
+            _sceneUnloadPending = false;
             _shutdownRequested = false;
             RegressionDiagnostics.Reset();
         }
@@ -60,6 +75,7 @@ namespace InFalsusChartExt.CustomSong.Audio
         {
             if (_shutdownRequested)
                 return;
+            PollDetached();
             ReleaseDisposedControllerAudio();
             ReleaseSelectionOwnedIfGameplayActive();
             SynchronizeGameplayAudioPause();
@@ -73,6 +89,9 @@ namespace InFalsusChartExt.CustomSong.Audio
                     pending.Deadline < DateTime.UtcNow)
                 {
                     Waiting.RemoveAt(i);
+                    if (pending.Selection)
+                        SilenceTemplateChannel(
+                            pending.Controller);
                     continue;
                 }
                 if (!TryGetNativeSound(pending.Controller, out _) ||
@@ -85,26 +104,107 @@ namespace InFalsusChartExt.CustomSong.Audio
             }
         }
 
+        /// <summary>
+        /// Marks a scene unload so the delayed chart cleanup can detach
+        /// gameplay audio instead of stopping it.
+        /// </summary>
+        internal static void OnSceneUnloaded()
+        {
+            _sceneUnloadPending = true;
+        }
+
+        /// <summary>
+        /// A new chart owns the gameplay bus again. Any channel left playing
+        /// from the previous chart must be stopped before the new song starts.
+        /// </summary>
+        internal static void OnChartActivated()
+        {
+            _sceneUnloadPending = false;
+            ReleaseDetached();
+        }
+
         internal static void ReleaseOwnedForSceneUnload()
         {
+            for (int i = 0; i < Waiting.Count; i++)
+            {
+                if (Waiting[i].Selection)
+                    SilenceTemplateChannel(
+                        Waiting[i].Controller);
+            }
+            for (int i = 0; i < Deferred.Count; i++)
+                SilenceTemplateChannel(
+                    Deferred[i].Controller);
             Waiting.Clear();
             Deferred.Clear();
             _ownedErrors = 0;
             _pauseErrors = 0;
             // A chart/scene cleanup can run while the song-select preview
-            // controller is still the active UI owner. Gameplay audio belongs
-            // to that chart and must be released; selection preview remains
-            // Mod-owned until the next selection, gameplay handoff, or full
-            // reset replaces/ends it.
+            // controller is still the active UI owner. Selection preview
+            // remains Mod-owned until the next selection, gameplay handoff,
+            // or the song-select scene is destroyed.
+            //
+            // Native `_Cg.Dispose` only clears its Sound/Channel fields; it
+            // deliberately does not stop playback. On a real scene unload the
+            // gameplay channel must therefore be detached and allowed to run
+            // to its natural end. Paused-away audio is the exception: leaving
+            // gameplay from the pause menu must not resume the song.
             for (int i = Owned.Count - 1; i >= 0; i--)
             {
                 OwnedAudio owned = Owned[i];
                 if (owned.Selection)
                     continue;
                 Owned.RemoveAt(i);
+                if (_sceneUnloadPending &&
+                    !owned.PausedByExtension)
+                {
+                    Detached.Add(owned);
+                }
+                else
+                {
+                    ReleaseOwned(owned);
+                }
+            }
+            _sceneUnloadPending = false;
+            RegressionDiagnostics.Reset();
+        }
+
+        private static void PollDetached()
+        {
+            if (Detached.Count == 0 || _isPlayingUnavailable)
+                return;
+            for (int i = Detached.Count - 1; i >= 0; i--)
+            {
+                OwnedAudio owned = Detached[i];
+                bool finished = owned.Channel == IntPtr.Zero;
+                if (!finished)
+                {
+                    try
+                    {
+                        int result = FmodExports.IsPlaying(
+                            owned.Channel,
+                            out int playing);
+                        // A failed query must not be interpreted as "ended";
+                        // OnChartActivated/Reset still release the handle.
+                        finished = result == 0 && playing == 0;
+                    }
+                    catch
+                    {
+                        _isPlayingUnavailable = true;
+                        return;
+                    }
+                }
+                if (!finished)
+                    continue;
+                Detached.RemoveAt(i);
                 ReleaseOwned(owned);
             }
-            RegressionDiagnostics.Reset();
+        }
+
+        private static void ReleaseDetached()
+        {
+            for (int i = 0; i < Detached.Count; i++)
+                ReleaseOwned(Detached[i]);
+            Detached.Clear();
         }
 
         [HarmonyPatch]
@@ -126,6 +226,10 @@ namespace InFalsusChartExt.CustomSong.Audio
                 ref string __0,
                 bool __6)
             {
+                // Deferred resolution must look up the custom song by the
+                // name the native caller asked for, not by the template alias
+                // substituted below.
+                string requestedName = __0;
 #if IFCE_DIAGNOSTICS
                 _diagnostics ??= new Stack<FactoryDiagnostic>();
                 _diagnostics.Push(
@@ -138,11 +242,14 @@ namespace InFalsusChartExt.CustomSong.Audio
                     _routes.Push(new Route(
                         null,
                         __6,
-                        __0));
+                        requestedName,
+                        false));
                     return;
                 }
+                bool installed =
+                    CustomSongRuntime.IsInstalled;
                 if (!CustomSongRuntime.TryGetSongForAudioName(
-                        __0, out CustomSongPlan song))
+                        requestedName, out CustomSongPlan song))
                 {
                     // A non-custom factory request means the user moved to an
                     // official preview or official gameplay. The selection
@@ -151,7 +258,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                     _routes.Push(new Route(
                         null,
                         __6,
-                        __0));
+                        requestedName,
+                        __6 && !installed));
                     return;
                 }
                 if (!string.IsNullOrWhiteSpace(
@@ -159,7 +267,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                 {
                     __0 = song.TemplateAudioName;
                 }
-                _routes.Push(new Route(song, __6, __0));
+                _routes.Push(new Route(
+                    song, __6, requestedName, false));
             }
 
             [HarmonyPostfix]
@@ -184,7 +293,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                     return;
                 if (route.Song is null)
                 {
-                    if (route.Selection)
+                    if (route.Selection &&
+                        route.PendingCustom)
                     {
                         Deferred.Add(new DeferredRoute(
                             __result,
@@ -226,6 +336,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                     deferred.Deadline < DateTime.UtcNow)
                 {
                     Deferred.RemoveAt(i);
+                    SilenceTemplateChannel(
+                        deferred.Controller);
 #if IFCE_DIAGNOSTICS
                     ChartExtMod.Log.Msg(
                         "[CustomSong] preview deferred expired " +
@@ -272,7 +384,82 @@ namespace InFalsusChartExt.CustomSong.Audio
                 ChartExtMod.Log.Error(
                     $"[CustomSong] audio replacement failed for " +
                     $"'{pending.Song.Config.Id}': {exception}");
+                // A failed preview must not fall back to the template song
+                // (for example the stock "a la mode").
+                if (pending.Selection)
+                    SilenceTemplateChannel(
+                        pending.Controller);
             }
+        }
+
+        /// <summary>
+        /// Called from the native audio-worker callback before it reads the
+        /// controller's Sound. Installing the custom Sound here makes the
+        /// worker cache the custom length instead of the template length.
+        /// </summary>
+        internal static void PrepareBeforeAudioWorker(_Cg controller)
+        {
+            if (controller is null ||
+                controller.Pointer == IntPtr.Zero)
+                return;
+            if (TryGetNativeSound(controller, out IntPtr currentSound) &&
+                IsOwnedSound(currentSound))
+                return;
+            for (int i = Waiting.Count - 1; i >= 0; i--)
+            {
+                Pending pending = Waiting[i];
+                if (pending.Selection ||
+                    pending.Controller is null ||
+                    pending.Controller.Pointer != controller.Pointer)
+                    continue;
+                if (!TryGetNativeSound(controller, out _))
+                    return;
+                Waiting.RemoveAt(i);
+                TryReplace(pending);
+                return;
+            }
+            // `_bl` may run before the factory Postfix has registered the
+            // pending route. The active chart still identifies the custom
+            // song, so install it here as well.
+            if (!CustomSongRuntime.SelectionCurrent)
+                return;
+            CustomChartPlan activeChart =
+                CustomSongRuntime.ActiveChart;
+            CustomSongPlan active = activeChart?.Song;
+            if (active is null)
+                return;
+            if (!TryGetNativeSound(controller, out _))
+                return;
+            TryReplace(new Pending(
+                controller, active, false));
+        }
+
+        internal static bool TryGetGameplayLengthMs(out uint lengthMs)
+        {
+            lengthMs = 0;
+            for (int i = 0; i < Owned.Count; i++)
+            {
+                OwnedAudio owned = Owned[i];
+                if (owned.Selection ||
+                    owned.Sound == IntPtr.Zero)
+                    continue;
+                try
+                {
+                    if (FmodExports.GetLength(
+                            owned.Sound,
+                            out uint length,
+                            (uint)TIMEUNIT.MS) == 0 &&
+                        length > 0)
+                    {
+                        lengthMs = length;
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
         }
 
         private static void Replace(Pending pending)
@@ -302,7 +489,25 @@ namespace InFalsusChartExt.CustomSong.Audio
             bool wasPaused = pausedValue != 0;
             if (pending.Selection)
                 wasPaused = false;
-
+            uint resumePositionMs = 0;
+            bool inheritedPosition = false;
+            if (oldChannelHandle != IntPtr.Zero &&
+                !pending.Selection)
+            {
+                // Only a controller that already holds one of our own
+                // replacements may donate its position (pause/resume
+                // recreation). The initial template Sound is unrelated and
+                // may have been playing for seconds while the controller was
+                // being configured; inheriting it would start the custom
+                // song mid-track and end the chart early.
+                inheritedPosition = IsOwnedSound(oldSoundHandle);
+                if (inheritedPosition &&
+                    FmodExports.GetPosition(
+                        oldChannelHandle,
+                        out uint position,
+                        (uint)TIMEUNIT.MS) == 0)
+                    resumePositionMs = position;
+            }
             IntPtr systemPointer = ResolveSystem(oldSoundHandle);
             if (systemPointer == IntPtr.Zero)
                 throw new InvalidOperationException(
@@ -329,7 +534,12 @@ namespace InFalsusChartExt.CustomSong.Audio
                         MODE.IGNORETAGS |
                         MODE.LOWMEM;
             if (IsMpegAudioFile(path))
-                mode |= MODE.MPEGSEARCH;
+            {
+                // MP3 (especially VBR) needs both MPEG search and accurate
+                // time for pause/resume seeking; without ACCURATETIME the
+                // resumed position drifts.
+                mode |= MODE.MPEGSEARCH | MODE.ACCURATETIME;
+            }
             if (pending.Selection)
                 mode |= MODE.ACCURATETIME;
             var exInfo = new CREATESOUNDEXINFO
@@ -410,7 +620,8 @@ namespace InFalsusChartExt.CustomSong.Audio
                 ConfigureChannel(
                     replacementChannel,
                     pending,
-                    wasPaused);
+                    wasPaused,
+                    resumePositionMs);
 #if IFCE_DIAGNOSTICS
                 if (pending.Selection)
                 {
@@ -481,7 +692,8 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static void ConfigureChannel(
             Il2CppFMOD.Channel channel,
             Pending pending,
-            bool paused)
+            bool paused,
+            uint resumePositionMs)
         {
             if (pending.Selection)
             {
@@ -521,10 +733,21 @@ namespace InFalsusChartExt.CustomSong.Audio
                         channel.handle,
                         (uint)(MODE._2D | MODE.LOOP_OFF)),
                     "Channel_SetMode");
-                Require(
-                    FmodExports.SetPosition(
-                        channel.handle, 0, (uint)TIMEUNIT.MS),
-                    "Channel_SetPosition");
+                int positionResult = FmodExports.SetPosition(
+                    channel.handle,
+                    resumePositionMs,
+                    (uint)TIMEUNIT.MS);
+                if (positionResult != 0 && resumePositionMs != 0)
+                {
+                    // A shorter replacement sound may reject the old
+                    // position; fall back to the start instead of failing
+                    // the whole replacement.
+                    positionResult = FmodExports.SetPosition(
+                        channel.handle,
+                        0,
+                        (uint)TIMEUNIT.MS);
+                }
+                Require(positionResult, "Channel_SetPosition");
             }
             Require(
                 FmodExports.SetPaused(
@@ -677,6 +900,19 @@ namespace InFalsusChartExt.CustomSong.Audio
                 ReleaseOwned(replaced);
         }
 
+        private static bool IsOwnedSound(IntPtr sound)
+        {
+            if (sound == IntPtr.Zero)
+                return false;
+            for (int i = 0; i < Owned.Count; i++)
+            {
+                if (Owned[i].Sound == sound)
+                    return true;
+            }
+            return false;
+        }
+
+
         private static void TrackSelectionOwned(
             IntPtr sound,
             IntPtr channel,
@@ -693,7 +929,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             });
         }
 
-        private static void ReleaseSelectionOwned()
+        internal static void ReleaseSelectionOwned()
         {
             for (int i = Owned.Count - 1; i >= 0; i--)
             {
@@ -702,6 +938,29 @@ namespace InFalsusChartExt.CustomSong.Audio
                     continue;
                 Owned.RemoveAt(i);
                 ReleaseOwned(owned);
+            }
+        }
+
+        /// <summary>
+        /// Stops the template Sound the native factory created for a custom
+        /// preview. Used when the custom replacement cannot be installed, so
+        /// the user hears silence instead of the wrong song.
+        /// </summary>
+        private static void SilenceTemplateChannel(_Cg controller)
+        {
+            try
+            {
+                if (controller is null ||
+                    controller.Pointer == IntPtr.Zero)
+                    return;
+                IntPtr channel = Marshal.ReadIntPtr(
+                    controller.Pointer +
+                    NativeLayoutCatalog.CustomSong.AudioChannel);
+                if (channel != IntPtr.Zero)
+                    FmodExports.Stop(channel);
+            }
+            catch
+            {
             }
         }
 
@@ -755,6 +1014,13 @@ namespace InFalsusChartExt.CustomSong.Audio
                 {
                     OwnedAudio owned = Owned[i];
                     if (owned.Selection)
+                        continue;
+                    // A gameplay scene may already have destroyed its
+                    // controller while the chart cleanup still waits for the
+                    // track to disappear. Do not stop the song during that
+                    // window; ReleaseOwnedForSceneUnload decides between
+                    // detaching and stopping.
+                    if (_sceneUnloadPending)
                         continue;
                     if (owned.Controller is null ||
                         !owned.Controller.TryGetTarget(
@@ -817,8 +1083,8 @@ namespace InFalsusChartExt.CustomSong.Audio
 
         /// <summary>
         /// Mirrors the native gameplay pause lifecycle for Mod-owned song
-        /// channels. Leaving gameplay pauses the channel instead of stopping
-        /// it, so resuming can continue from the same FMOD position.
+        /// channels. Only the pause layer freezes the channel; leaving
+        /// gameplay keeps the native "play to the end" behaviour.
         /// </summary>
         private static void SynchronizeGameplayAudioPause()
         {
@@ -826,20 +1092,40 @@ namespace InFalsusChartExt.CustomSong.Audio
                 return;
             bool gameplay =
                 (byte)Il2Cpp_E._VD._a == 2;
+            // The native chart clock freezes while the pause layer is still
+            // visible (including the resume fade). Resuming the Mod-owned
+            // channel earlier makes the game seek it back when the clock
+            // resumes, which users hear as the music jumping backwards.
+            bool pauseLayerActive =
+                TimingGroupRuntime.IsPauseLayerActive();
+            bool running =
+                gameplay && !pauseLayerActive;
             for (int i = 0; i < Owned.Count; i++)
             {
                 OwnedAudio owned = Owned[i];
                 if (owned.Selection || owned.Channel == IntPtr.Zero)
                     continue;
                 if (gameplay)
-                {
                     owned.GameplayStarted = true;
-                    if (owned.PausedByExtension)
+                if (running)
+                {
+                    if (owned.PausedByExtension &&
+                        !owned.PauseUnavailable)
                         SetOwnedPaused(owned, false);
                     continue;
                 }
-                if (!owned.GameplayStarted || owned.PausedByExtension)
+                // Only the pause menu may pause Mod-owned gameplay audio.
+                // Chart-end/results transitions must leave the song playing,
+                // matching native `_Cg` (whose Dispose never stops it).
+                if (!pauseLayerActive)
                     continue;
+                if (!owned.GameplayStarted)
+                    continue;
+                if (owned.PauseUnavailable)
+                    continue;
+                // Re-assert every frame: the native side may resume the
+                // channel as soon as the chart clock starts, while the pause
+                // layer is still fading out.
                 SetOwnedPaused(owned, true);
             }
         }
@@ -855,6 +1141,14 @@ namespace InFalsusChartExt.CustomSong.Audio
             {
                 int result = FmodExports.SetPaused(
                     owned.Channel, paused);
+                // FMOD_ERR_INVALID_HANDLE: the native controller already
+                // stopped/released this channel (for example during the
+                // results transition). Do not retry every frame.
+                if (result == 30)
+                {
+                    owned.PauseUnavailable = true;
+                    return;
+                }
                 if (result != 0 && _pauseErrors++ < 10)
                 {
                     ChartExtMod.Log.Warning(
@@ -938,16 +1232,19 @@ namespace InFalsusChartExt.CustomSong.Audio
             internal Route(
                 CustomSongPlan song,
                 bool selection,
-                string requestedName)
+                string requestedName,
+                bool pendingCustom)
             {
                 Song = song;
                 Selection = selection;
                 RequestedName = requestedName ?? string.Empty;
+                PendingCustom = pendingCustom;
             }
 
             internal CustomSongPlan Song { get; }
             internal bool Selection { get; }
             internal string RequestedName { get; }
+            internal bool PendingCustom { get; }
         }
 
 #if IFCE_DIAGNOSTICS
@@ -1010,6 +1307,7 @@ namespace InFalsusChartExt.CustomSong.Audio
             internal bool Selection;
             internal bool GameplayStarted;
             internal bool PausedByExtension;
+            internal bool PauseUnavailable;
         }
     }
 }

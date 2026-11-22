@@ -17,7 +17,6 @@ namespace InFalsusChartExt
     /// </summary>
     internal static class SkyBlockLineGlowRuntime
     {
-        private const double FadeOutMs = 300.0;
         private const float NativeOpacityEpsilon = 0.001f;
 
         private static readonly int CenterXId =
@@ -27,13 +26,13 @@ namespace InFalsusChartExt
         private static readonly int OpacityId =
             Shader.PropertyToID("_Opacity");
         private static int _generation = -1;
-        private static double _lastActiveMs =
-            double.NegativeInfinity;
+        private static bool _active;
         private static int _errors;
 
         internal static void Tick(
             Il2Cppifapp.Game.Scenes.Game.Track track)
         {
+            long profileStart = FrameProfiler.Begin(out long profileAlloc);
             if (!BuildProfile.Supports(NativeCapability.SkyBlock))
                 return;
             try
@@ -46,7 +45,7 @@ namespace InFalsusChartExt
                 {
                     ReleaseIfActive(track);
                     _generation = -1;
-                    _lastActiveMs = double.NegativeInfinity;
+                    _active = false;
                     return;
                 }
                 if (!SkyBlockRuntimeSlots.Ensure(plan))
@@ -55,7 +54,7 @@ namespace InFalsusChartExt
                 {
                     ReleaseIfActive(track);
                     _generation = plan.Generation;
-                    _lastActiveMs = double.NegativeInfinity;
+                    _active = false;
                 }
                 if (TimingGroupRuntime.IsVisualClockPaused ||
                     TimingGroupRuntime.IsResumeTransition())
@@ -91,39 +90,46 @@ namespace InFalsusChartExt
                 if (output.GetFloat(OpacityId) >
                     NativeOpacityEpsilon)
                 {
-                    _lastActiveMs = double.NegativeInfinity;
+                    _active = false;
                     return;
                 }
 
-                if (TryResolveRange(
-                        plan, now,
+                // The managed strip is the single source of truth. It
+                // publishes the member sitting at the line (and the exact
+                // range) after its own release checks have run this frame,
+                // so the glow appears and disappears on exactly the same
+                // frames instead of reconstructing a second window.
+                if (SkyBlockVisualRuntime.TryGetLineState(
+                        out long lineId,
                         out float left,
                         out float right,
-                        out double endSeconds))
+                        out _) &&
+                    !SceneControlRuntime.IsNoteHidden(lineId))
                 {
-                    _lastActiveMs = now;
+                    _active = true;
+                    float opacity = PulseOpacity(now / 1000.0);
                     effect._P(left, right);
                     ApplyOutput(
                         output, left, right,
-                        PulseOpacity(endSeconds));
+                        opacity);
                     return;
                 }
-
-                if (IsFinite(_lastActiveMs))
+                if (_active)
                 {
-                    float fade = (float)Clamp(
-                        1.0 -
-                        (now - _lastActiveMs) / FadeOutMs,
-                        0.0, 1.0);
+                    _active = false;
                     effect._P(0f, 0f);
-                    ApplyOutput(output, 0f, 0f, fade);
-                    if (fade <= NativeOpacityEpsilon)
-                        _lastActiveMs = double.NegativeInfinity;
+                    ApplyOutput(output, 0f, 0f, 0f);
                 }
             }
             catch (Exception e)
             {
                 LogError("tick", e);
+            }
+            finally
+            {
+                FrameProfiler.End(
+                    FrameProfiler.SkyGlow,
+                    profileStart, profileAlloc);
             }
         }
 
@@ -136,75 +142,7 @@ namespace InFalsusChartExt
             }
             catch { }
             _generation = -1;
-            _lastActiveMs = double.NegativeInfinity;
-        }
-
-        private static bool TryResolveRange(
-            SkyBlockPlan plan,
-            double now,
-            out float left,
-            out float right,
-            out double endSeconds)
-        {
-            left = 0f;
-            right = 0f;
-            endSeconds = 0.0;
-            bool found = false;
-
-            Il2Cpp_E._VD judge =
-                Il2Cppifapp.Game.Scenes.GameScene._DN;
-            if (judge == null ||
-                judge.Pointer == IntPtr.Zero)
-                return false;
-            float cursorX = BitConverter.Int32BitsToSingle(
-                Marshal.ReadInt32(
-                    judge.Pointer +
-                    NativeLayoutCatalog.SkyJudge.CursorX));
-            if (!IsFinite(cursorX))
-                return false;
-
-            long ownerSerial = 0L;
-            for (int i = 0;
-                 i < plan.VisualMembers.Count;
-                 i++)
-            {
-                SkyBlockMember member = plan.VisualMembers[i];
-                if (now < member.StartMs ||
-                    now >= member.EndMs ||
-                    SceneControlRuntime.IsNoteHidden(member.Id))
-                    continue;
-                if (!SkyBlockJudgeRuntime.IsMemberGlowActive(
-                        member, now))
-                    continue;
-                if (member.GlowSerial <= ownerSerial)
-                    continue;
-
-                if (!SkyBlockVisualRuntime.TryGetVisualTiming(
-                        member, now,
-                        out double visualNow,
-                        out double visualStart,
-                        out double visualEnd))
-                    continue;
-                double progress = member.TimingGroup == 0
-                    ? SkyBlockVisualRuntime.RawProgress(
-                        member, now)
-                    : (visualNow - visualStart) /
-                      (visualEnd - visualStart);
-                if (!(progress > 0.0 && progress < 1.0))
-                    continue;
-
-                SkyBandRange range = member.RangeAt(now);
-                if (!IsFinite(range.Lo) ||
-                    !IsFinite(range.Hi))
-                    continue;
-
-                left = range.Lo;
-                right = range.Hi;
-                endSeconds = visualEnd / 1000.0;
-                found = true;
-                ownerSerial = member.GlowSerial;
-            }
-            return found;
+            _active = false;
         }
 
         private static float PulseOpacity(
@@ -237,8 +175,9 @@ namespace InFalsusChartExt
         {
             if (track == null ||
                 track.Pointer == IntPtr.Zero ||
-                !IsFinite(_lastActiveMs))
+                !_active)
                 return;
+            _active = false;
             Material output = track._tnA;
             IFCEJudgementLineMeshEffect effect =
                 track.judgementLineMeshEffect;

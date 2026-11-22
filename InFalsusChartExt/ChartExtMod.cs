@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 [assembly: MelonInfo(
     typeof(InFalsusChartExt.MelonChartExtMod),
     "InFalsus Chart Ext",
-    "0.2.0-patch1",
+    "0.3.0",
     "IFCE")]
 [assembly: MelonGame("lowiro", "infalsus")]
 #endif
@@ -71,6 +71,7 @@ namespace InFalsusChartExt
                     "[ChartExt] native background hook install failed: " +
                     e);
             }
+
         }
 
         internal static void MigrateLegacyData()
@@ -138,9 +139,11 @@ namespace InFalsusChartExt
 
         internal static void Tick()
         {
+            long profileStart = FrameProfiler.Begin(out long profileAlloc);
             StartupLoadingScreen.Tick();
             ChartRuntimeLifecycle.Tick();
             NativeNoteSlotTable.Refresh();
+            GameplayStateGuard.Tick();
             AutoplayRuntime.Tick();
             AutoplaySettingsOverlay.Tick();
             RegressionDiagnostics.GameplayStateTick(
@@ -151,6 +154,8 @@ namespace InFalsusChartExt
             DisplayModeRuntime.Tick();
             RunMergedSubsystem(
                 "installer", () => CustomSongRuntime.Tick());
+            FrameProfiler.End(
+                FrameProfiler.Tick, profileStart, profileAlloc);
         }
 
         internal static void OnGUI()
@@ -296,7 +301,7 @@ namespace InFalsusChartExt
     [BepInPlugin(
         "com.ifce.chartext",
         "InFalsus Chart Ext",
-        "0.2.0-patch1")]
+        "0.3.0")]
     [BepInProcess("infalsus.exe")]
     public sealed class BepInExChartExtPlugin : BasePlugin
     {

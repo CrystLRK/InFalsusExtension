@@ -1,6 +1,7 @@
 // Global runtime lifecycle and owned-resource cleanup.
 using System;
 using InFalsusChartExt.CustomSong.Audio;
+using InFalsusChartExt.CustomSong.Lifecycle;
 
 namespace InFalsusChartExt
 {
@@ -20,11 +21,15 @@ namespace InFalsusChartExt
         internal static void MarkChartActive()
         {
             _sceneCleanupPending = false;
+            FrameProfiler.ResetWindow();
+            GameplayStateGuard.Reset();
+            CustomSongAudioController.OnChartActivated();
             AutoplayScoreGuard.BeginChartSession();
         }
 
         internal static void OnSceneUnloaded(int buildIndex, string sceneName)
         {
+            CustomSongAudioController.OnSceneUnloaded();
             AutoplayScoreGuard.OnSceneUnloaded();
             _sceneCleanupPending = true;
             _cleanupNotBeforeFrame = UnityEngine.Time.frameCount + 3;
@@ -72,14 +77,26 @@ namespace InFalsusChartExt
             Run("sky-block-line-glow", SkyBlockLineGlowRuntime.ResetForChartSwitch);
             Run("sky-block-slots", SkyBlockRuntimeSlots.Reset);
             if (disposeChartContext)
+            {
                 Run(
                     "chart-context",
                     ChartRuntimeContext.ResetForChartSwitch);
+                // The gameplay session is over; a stale custom selection must
+                // not be installed into the next (possibly official) chart's
+                // audio worker.
+                Run("custom-song-selection", CustomSongRuntime.ClearSelection);
+            }
             Run("showtext", ShowTextRuntime.DisposeResources);
             Run("special-level", SpecialLevelRuntime.ResetForScene);
             Run("bomb", BombSkinRuntime.DisposeForSceneUnload);
             Run("timing-group", TimingGroupRuntime.ResetForChartSwitch);
             Run("timing-group-visual", TimingGroupVisualRuntime.ResetForChartSwitch);
+            Run(
+                "negative-speed-visual",
+                NegativeSpeedVisualRuntime.ResetForChartSwitch);
+            Run(
+                "negative-flick-visual",
+                NegativeFlickVisualRuntime.ResetForChartSwitch);
             Run("timing-noinput-sky", TimingNoInputSkyVisualRuntime.ResetForChartSwitch);
             Run("visual-notes", VisualNoteRuntime.ResetForChartSwitch);
             Run("normal-sky-edge", NormalSkyInternalEdgeRuntime.ResetForChartSwitch);

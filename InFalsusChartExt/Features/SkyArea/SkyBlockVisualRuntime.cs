@@ -30,11 +30,14 @@ namespace InFalsusChartExt
                 BandArea;
             internal Il2Cppifapp.Game.Scenes.Game.SkySafeArea
                 ShadowArea;
+            internal UnityEngine.MeshRenderer[] BandRenderers;
+            internal UnityEngine.MeshRenderer[] ShadowRenderers;
             internal Il2Cppifapp.Game.Scenes.Game.SafeAreaColorDetails
                 BaseColorDetails;
             internal bool BracketsActive;
             internal bool BandActive;
             internal bool ShadowActive;
+            internal bool RenderSuppressed;
             internal readonly List<Material> OwnedMaterials =
                 new List<Material>(4);
         }
@@ -52,8 +55,56 @@ namespace InFalsusChartExt
         private static double _visualNowValue = double.NaN;
         private static double _spawnLeadMs =
             VisualSpawnTiming.NativeQuickLeadMs;
+        private static double _lastVisualNow = double.NaN;
+        private static bool _lastVisualBackward;
         private static int _creationsThisFrame;
         private static int _errors;
+        private static bool _lineActive;
+        private static long _lineMemberId;
+        private static float _lineLo;
+        private static float _lineHi;
+        private static double _lineProgress;
+        private static readonly Dictionary<long, int> VisualIndexById =
+            new Dictionary<long, int>();
+        private static readonly HashSet<long> AbandonedVisualIds =
+            new HashSet<long>();
+
+        internal static bool IsVisualAbandoned(long id)
+            => AbandonedVisualIds.Contains(id);
+
+        private static void MarkVisualAbandoned(long id)
+        {
+            if (id >= 0) AbandonedVisualIds.Add(id);
+        }
+
+        internal static bool HasActiveEntry(long id)
+        {
+            if (!VisualIndexById.TryGetValue(id, out int index))
+                return false;
+            if (index < 0 || index >= _entries.Length)
+                return false;
+            Entry entry = _entries[index];
+            return entry != null &&
+                   entry.BandActive &&
+                   entry.Band != null;
+        }
+
+        /// <summary>
+        /// The member currently crossing the judgement line, as decided by
+        /// this frame's render pass (after release checks). The line glow
+        /// consumes this state instead of recomputing its own window, so
+        /// both appear and disappear on the same frame.
+        /// </summary>
+        internal static bool TryGetLineState(
+            out long id, out float lo, out float hi,
+            out double progress)
+        {
+            id = _lineMemberId;
+            lo = _lineLo;
+            hi = _lineHi;
+            progress = _lineProgress;
+            return _lineActive;
+        }
 
         internal static void OnChartCompiled()
         {
@@ -63,16 +114,20 @@ namespace InFalsusChartExt
             int generation = plan?.Generation ?? -1;
             if (_generation == generation) return;
             DestroyAll();
+            AbandonedVisualIds.Clear();
             _generation = generation;
             _cursor = 0;
             _lastNow = double.NaN;
             _visualNowInput = double.NaN;
             _visualNowValue = double.NaN;
+            _lastVisualNow = double.NaN;
+            _lastVisualBackward = false;
             ActiveMembers.Clear();
             _entries = plan == null ||
                        plan.VisualMembers.Count == 0
                 ? Array.Empty<Entry>()
                 : new Entry[plan.VisualMembers.Count];
+            VisualIndexById.Clear();
             if (plan != null)
             {
                 for (int i = 0;
@@ -81,6 +136,7 @@ namespace InFalsusChartExt
                 {
                     SkyBlockMember member =
                         plan.VisualMembers[i];
+                    VisualIndexById[member.Id] = i;
                     member.VisualTimingGeneration = -1;
                     member.VisualStartMs = 0.0;
                     member.VisualEndMs = 0.0;
@@ -91,6 +147,7 @@ namespace InFalsusChartExt
         internal static void Tick(
             Il2Cppifapp.Game.Scenes.Game.Track track)
         {
+            long profileStart = FrameProfiler.Begin(out long profileAlloc);
             if (!BuildProfile.Supports(NativeCapability.SkyBlock))
                 return;
             try
@@ -113,6 +170,7 @@ namespace InFalsusChartExt
                 double now =
                     TimingGroupRuntime.CurrentMs();
                 if (double.IsNaN(now)) return;
+                _lineActive = false;
                 _spawnLeadMs =
                     VisualSpawnTiming.MaxLeadMs(
                         track.Pointer);
@@ -130,7 +188,8 @@ namespace InFalsusChartExt
                         Entry hiddenEntry =
                             _entries[member.VisualIndex];
                         if (hiddenEntry != null)
-                            Hide(hiddenEntry);
+                            SetEntryRenderVisible(
+                                hiddenEntry, false);
                         if (now <
                             member.EndMs + EndRetainMs)
                             continue;
@@ -156,12 +215,39 @@ namespace InFalsusChartExt
                     if (now >= member.EndMs &&
                         !member.JudgementSettled)
                         SyncFinalRecordState(member);
+                    // Safety valve: a member must never outlive its authored
+                    // interval indefinitely. The normal release path still
+                    // uses the visual timeline; this cap only catches a
+                    // stalled or inconsistent visual window.
+                    if (now >= member.EndMs)
+                    {
+                        if (double.IsNaN(member.PastEndSinceMs))
+                            member.PastEndSinceMs = now;
+                        double authoredMs = Math.Max(
+                            0.0,
+                            (double)member.EndMs - member.StartMs);
+                        double releaseCapMs = Math.Max(
+                            EndRetainMs, authoredMs * 4.0);
+                        if (now - member.PastEndSinceMs >=
+                            releaseCapMs)
+                        {
+                            ReleaseActiveAt(i);
+                            i--;
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        member.PastEndSinceMs = double.NaN;
+                    }
                     if (!TryGetVisualTiming(
                             member, now,
                             out double visualNow,
                             out double visualStart,
                             out double visualEnd))
+                    {
                         continue;
+                    }
 
                     double leadMs = PositionLeadMs(
                         visualStart, visualNow);
@@ -175,19 +261,34 @@ namespace InFalsusChartExt
                         i--;
                         continue;
                     }
-                    double progress =
+                    double visualProgress =
                         Math.Max(0.0, Math.Min(
                             1.0,
                             (visualNow - visualStart) /
                             (visualEnd - visualStart)));
                     double meshProgress = member.TimingGroup == 0
-                        ? RawProgress(member, now)
-                        : progress;
-                    double meshEndDeltaMs = member.TimingGroup == 0
-                        ? member.EndMs - now
-                        : endDeltaMs;
+                        ? Math.Min(
+                            RawProgress(member, now),
+                            visualProgress)
+                        : visualProgress;
+                    // Lifetime is driven by the speed-warped visual clock.
+                    // Authored progress is only used for mesh trimming, so a
+                    // 0.2x section cannot release the strip five times early.
+                    double lifetimeProgress = visualProgress;
+                    double lifetimeEndDelta = endDeltaMs;
+                    if (member.TimingGroup == 0)
+                    {
+                        // Preserve the accepted fast-speed behavior: wait
+                        // for both the authored and the visual end.
+                        lifetimeProgress = Math.Min(
+                            visualProgress,
+                            RawProgress(member, now));
+                        lifetimeEndDelta = Math.Max(
+                            endDeltaMs,
+                            member.EndMs - now);
+                    }
                     if (ShouldReleaseAfterLine(
-                            member, meshProgress, meshEndDeltaMs,
+                            member, lifetimeProgress, lifetimeEndDelta,
                             now))
                     {
                         ReleaseActiveAt(i);
@@ -198,7 +299,10 @@ namespace InFalsusChartExt
                         ShouldRetainWholeStrip(
                             member, now);
                     bool forceFullRed =
-                        meshProgress >= 1.0 && retainWholeStrip;
+                        visualProgress >= 1.0 && retainWholeStrip;
+
+                    PublishLineState(
+                        member, visualProgress, now);
 
                     Entry entry = _entries[member.VisualIndex];
                     if (entry == null)
@@ -208,7 +312,11 @@ namespace InFalsusChartExt
                             continue;
                         _creationsThisFrame++;
                         entry = AcquireEntry(track, member);
-                        if (entry == null) continue;
+                        if (entry == null)
+                        {
+                            MarkVisualAbandoned(member.Id);
+                            continue;
+                        }
                         _entries[member.VisualIndex] = entry;
                     }
                     UpdateEntry(
@@ -222,11 +330,21 @@ namespace InFalsusChartExt
             {
                 LogError("tick", e);
             }
+            finally
+            {
+                FrameProfiler.End(
+                    FrameProfiler.SkyVisual,
+                    profileStart, profileAlloc);
+            }
         }
 
         internal static void ResetForChartSwitch()
         {
             DestroyAll();
+            AbandonedVisualIds.Clear();
+            _lineActive = false;
+            _lastVisualNow = double.NaN;
+            _lastVisualBackward = false;
             ActiveMembers.Clear();
             _entries = Array.Empty<Entry>();
             _generation = -1;
@@ -239,10 +357,22 @@ namespace InFalsusChartExt
         private static void RefreshActiveMembers(
             SkyBlockPlan plan, double now)
         {
+            double visualNow = GlobalVisualNow(now);
+            bool visualBackward =
+                !double.IsNaN(_lastVisualNow) &&
+                !double.IsNaN(visualNow) &&
+                visualNow + 1.0 < _lastVisualNow;
+            bool visualDirectionChanged =
+                !double.IsNaN(_lastVisualNow) &&
+                visualBackward != _lastVisualBackward;
+            if (!double.IsNaN(visualNow))
+                _lastVisualNow = visualNow;
+            _lastVisualBackward = visualBackward;
             bool rewind =
                 !double.IsNaN(_lastNow) &&
                 now + 0.001 < _lastNow;
-            if (double.IsNaN(_lastNow) || rewind)
+            if (double.IsNaN(_lastNow) || rewind ||
+                visualDirectionChanged)
             {
                 ActiveMembers.Clear();
                 _cursor = 0;
@@ -259,48 +389,40 @@ namespace InFalsusChartExt
                             Hide(_entries[i]);
                     }
                 }
-                while (_cursor < plan.VisualMembers.Count)
-                {
-                    SkyBlockMember member =
-                        plan.VisualMembers[_cursor];
-                    double leadMs = SpawnLeadMs(
-                        member, now);
-                    if (leadMs > _spawnLeadMs)
-                        break;
-                    _cursor++;
-                    if (ShouldTrackMember(member, now))
-                        ActiveMembers.Add(member);
-                }
+                AdvanceVisualCursor(plan, now);
             }
             else
             {
-                while (_cursor < plan.VisualMembers.Count)
-                {
-                    SkyBlockMember member =
-                        plan.VisualMembers[_cursor];
-                    double leadMs = SpawnLeadMs(
-                        member, now);
-                    if (leadMs > _spawnLeadMs)
-                        break;
-                    _cursor++;
-                    if (ShouldTrackMember(member, now))
-                        ActiveMembers.Add(member);
-                }
+                AdvanceVisualCursor(plan, now);
             }
             _lastNow = now;
         }
 
-        private static double SpawnLeadMs(
-            SkyBlockMember member,
+        private static void AdvanceVisualCursor(
+            SkyBlockPlan plan,
             double now)
         {
-            if (!TryGetVisualTiming(
-                    member, now,
-                    out double visualNow,
-                    out double visualStart,
-                    out _))
-                return double.PositiveInfinity;
-            return visualStart - visualNow;
+            while (_cursor < plan.VisualMembers.Count)
+            {
+                SkyBlockMember member =
+                    plan.VisualMembers[_cursor];
+                if (!TryGetVisualTiming(
+                        member, now,
+                        out double visualNow,
+                        out double visualStart,
+                        out _))
+                {
+                    // A single member without a usable visual timeline must
+                    // not freeze every later SkyArea in the chart.
+                    _cursor++;
+                    continue;
+                }
+                if (visualStart - visualNow > _spawnLeadMs)
+                    break;
+                _cursor++;
+                if (ShouldTrackMember(member, now))
+                    ActiveMembers.Add(member);
+            }
         }
 
         private static double PositionLeadMs(
@@ -326,6 +448,23 @@ namespace InFalsusChartExt
         {
             if (member.TimingGroup == 0)
             {
+                // 组 0：位置、now、长度全部用同一条 WGlobal（track 曲线），
+                // 避免 `_IA`（编译期时钟）与 WGlobal 混用导致忽略慢速段。
+                double globalNow = GlobalVisualNow(now);
+                double globalStart =
+                    TimingGroupRuntime.VisualTimeMs(0, member.StartMs);
+                double globalEnd =
+                    TimingGroupRuntime.VisualTimeMs(0, member.EndMs);
+                if (IsFinite(globalNow) &&
+                    IsFinite(globalStart) &&
+                    IsFinite(globalEnd) &&
+                    Math.Abs(globalEnd - globalStart) > 1e-6)
+                {
+                    visualNow = globalNow;
+                    visualStart = globalStart;
+                    visualEnd = globalEnd;
+                    return true;
+                }
                 if (!TryGetCachedGlobalVisualTiming(
                         member,
                         out visualStart,
@@ -338,8 +477,22 @@ namespace InFalsusChartExt
                 else
                 {
                     visualNow = GlobalVisualNow(now);
-                    if (!IsFinite(visualNow) ||
-                        visualEnd <= visualStart)
+                    if (!IsFinite(visualNow))
+                    {
+                        visualNow = now;
+                        visualStart = member.StartMs;
+                        visualEnd = member.EndMs;
+                    }
+                    else if (visualEnd < visualStart)
+                    {
+                        // Negative-speed reversal: keep the compiled visual
+                        // interval and anchor it at the near end. Falling back
+                        // to authored time here made the strip fly away.
+                        double swap = visualStart;
+                        visualStart = visualEnd;
+                        visualEnd = swap;
+                    }
+                    else if (visualEnd == visualStart)
                     {
                         visualNow = now;
                         visualStart = member.StartMs;
@@ -347,15 +500,30 @@ namespace InFalsusChartExt
                     }
                 }
             }
-            else if (!TimingGroupRuntime.TryGetNativeVisualTiming(
-                         member.TimingGroup,
-                         now,
-                         member.StartMs,
-                         member.EndMs,
-                         out visualNow,
-                         out visualStart,
-                         out visualEnd))
-                return false;
+            else
+            {
+                // managed SkyBlock 由本模块自绘，不需要原生坐标系。
+                // 全局速度为 0/负时 InvGlobal 不可逆，走原生投影会把
+                // 距离算成 now±60000；这里直接用组时间线的相对距离。
+                double groupNow = TimingGroupRuntime.VisualTimeMs(
+                    member.TimingGroup, now);
+                double groupStart = TimingGroupRuntime.VisualTimeMs(
+                    member.TimingGroup, member.StartMs);
+                double groupEnd = TimingGroupRuntime.VisualTimeMs(
+                    member.TimingGroup, member.EndMs);
+                if (!IsFinite(groupNow) ||
+                    !IsFinite(groupStart) ||
+                    !IsFinite(groupEnd))
+                {
+                    visualNow = 0.0;
+                    visualStart = 0.0;
+                    visualEnd = 0.0;
+                    return false;
+                }
+                visualNow = 0.0;
+                visualStart = groupStart - groupNow;
+                visualEnd = groupEnd - groupNow;
+            }
             return IsFinite(visualNow) &&
                    IsFinite(visualStart) &&
                    IsFinite(visualEnd) &&
@@ -427,14 +595,48 @@ namespace InFalsusChartExt
         private static bool ShouldTrackMember(
             SkyBlockMember member, double now)
         {
-            return now < member.EndMs + EndRetainMs;
+            if (!TryGetEffectiveVisualWindow(
+                    member, now,
+                    out double visualNow,
+                    out double visualEnd))
+                return now < member.EndMs + EndRetainMs;
+            return visualNow < visualEnd + EndRetainMs;
         }
 
         internal static bool ShouldRetainUnavailableMember(
             SkyBlockMember member, double now)
         {
-            return member != null &&
-                   now < member.EndMs + EndRetainMs;
+            if (member == null)
+                return false;
+            if (!TryGetEffectiveVisualWindow(
+                    member, now,
+                    out double visualNow,
+                    out double visualEnd))
+                return now < member.EndMs + EndRetainMs;
+            return visualNow < visualEnd + EndRetainMs;
+        }
+
+        private static bool TryGetEffectiveVisualWindow(
+            SkyBlockMember member,
+            double now,
+            out double visualNow,
+            out double visualEnd)
+        {
+            if (!TryGetVisualTiming(
+                    member, now,
+                    out visualNow,
+                    out _,
+                    out visualEnd))
+                return false;
+            if (member.TimingGroup == 0)
+            {
+                double authoredEnd =
+                    TimingGroupRuntime.VisualTimeMs(
+                        0, member.EndMs);
+                if (IsFinite(authoredEnd) && authoredEnd > visualEnd)
+                    visualEnd = authoredEnd;
+            }
+            return true;
         }
 
         private static bool ShouldReleaseAfterLine(
@@ -456,6 +658,31 @@ namespace InFalsusChartExt
         {
             return !SkyBlockJudgeRuntime.IsMemberInNormalState(
                 member, now);
+        }
+
+        private static void PublishLineState(
+            SkyBlockMember member,
+            double progress,
+            double now)
+        {
+            if (!(progress >= 0.0 && progress < 1.0))
+                return;
+            if (!SkyBlockJudgeRuntime.IsMemberInNormalState(
+                    member, now) &&
+                !SkyBlockJudgeRuntime.IsMemberGlowActive(
+                    member, now))
+                return;
+            if (_lineActive && progress <= _lineProgress)
+                return;
+            SkyBandRange range =
+                member.RangeAtProgress(progress);
+            if (!IsFinite(range.Lo) || !IsFinite(range.Hi))
+                return;
+            _lineActive = true;
+            _lineMemberId = member.Id;
+            _lineLo = range.Lo;
+            _lineHi = range.Hi;
+            _lineProgress = progress;
         }
 
 
@@ -561,8 +788,15 @@ namespace InFalsusChartExt
                     Il2Cppifapp.Game.Scenes.Game.SkySafeArea>();
                 entry.ShadowArea = entry.Shadow.GetComponent<
                     Il2Cppifapp.Game.Scenes.Game.SkySafeArea>();
+                entry.BandRenderers =
+                    entry.Band.GetComponentsInChildren<
+                        UnityEngine.MeshRenderer>(true);
+                entry.ShadowRenderers =
+                    entry.Shadow.GetComponentsInChildren<
+                        UnityEngine.MeshRenderer>(true);
                 entry.BandActive = true;
                 entry.ShadowActive = true;
+                entry.RenderSuppressed = false;
                 var details = track.safeAreaColorDetails;
                 if (details == null && entry.BandArea != null)
                     details = entry.BandArea.colorDetails;
@@ -603,6 +837,8 @@ namespace InFalsusChartExt
             {
                 entry = CreateEntry(track, member);
             }
+            if (entry == null)
+                return null;
             // The native spawn list is filtered before Track.Update consumes
             // it. This target-only guard handles an object that was already
             // materialized before the filter ran.
@@ -679,6 +915,7 @@ namespace InFalsusChartExt
             bool forceFullRed)
         {
             SkyBlockMember member = entry.Member;
+            SetEntryRenderVisible(entry, true);
             Il2Cpp_b._fA note =
                 Unsafe.ReadUnaligned<Il2Cpp_b._fA>(
                     (void*)notePtr);
@@ -730,8 +967,8 @@ namespace InFalsusChartExt
             float shadowZScale = (float)trackScale;
             double visualLength =
                 durationSeconds * visualScale;
-            double chartSeconds = visualNowMs / 1000.0;
             double displayLeadMs = leadMs;
+            double chartSeconds = visualNowMs / 1000.0;
             double noteStartSeconds =
                 chartSeconds + displayLeadMs / 1000.0;
             float redFactor = forceFullRed
@@ -1005,6 +1242,7 @@ namespace InFalsusChartExt
         private static void Hide(Entry entry)
         {
             if (entry == null) return;
+            SetEntryRenderVisible(entry, true);
             try
             {
                 if (entry.Band != null)
@@ -1016,6 +1254,52 @@ namespace InFalsusChartExt
             entry.BandActive = false;
             entry.ShadowActive = false;
             SetBracketsActive(entry, false);
+        }
+
+        /// <summary>
+        /// Hidegroup only suppresses the managed meshes. The entry stays
+        /// active and owned so native visuals/judgement remain stripped and
+        /// the managed judge keeps consuming records while hidden.
+        /// </summary>
+        private static void SetEntryRenderVisible(
+            Entry entry, bool visible)
+        {
+            if (entry == null) return;
+            try
+            {
+                if (visible)
+                {
+                    if (!entry.RenderSuppressed) return;
+                    SetRenderersEnabled(
+                        entry.BandRenderers, true);
+                    SetRenderersEnabled(
+                        entry.ShadowRenderers, true);
+                    entry.RenderSuppressed = false;
+                    return;
+                }
+                SetRenderersEnabled(
+                    entry.BandRenderers, false);
+                SetRenderersEnabled(
+                    entry.ShadowRenderers, false);
+                entry.RenderSuppressed = true;
+                SetBracketsActive(entry, false);
+            }
+            catch { }
+        }
+
+        private static void SetRenderersEnabled(
+            UnityEngine.MeshRenderer[] renderers,
+            bool enabled)
+        {
+            if (renderers == null) return;
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                UnityEngine.MeshRenderer renderer =
+                    renderers[i];
+                if (renderer != null &&
+                    renderer.Pointer != IntPtr.Zero)
+                    renderer.enabled = enabled;
+            }
         }
 
         private static void DestroyAll()

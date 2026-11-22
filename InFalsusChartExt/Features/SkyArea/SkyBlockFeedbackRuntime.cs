@@ -24,7 +24,10 @@ namespace InFalsusChartExt
         private static IntPtr _eventBuffer;
         private static bool _resolutionAttempted;
         private static bool _resolutionFailedLogged;
-        private static bool _holdActive;
+        private static bool _managedActive;
+        private static bool _autoplayActive;
+        private static bool _busStartedByMod;
+        private static int _lastStartFrame = -1;
         private static int _errors;
 
         internal static void PlayHit()
@@ -36,45 +39,74 @@ namespace InFalsusChartExt
             bool independentActive,
             bool nativeActive)
         {
+            _managedActive = independentActive;
+            UpdateHoldBus();
+        }
+
+        /// <summary>
+        /// Autoplay record replacement bypasses the native sky hit path. This
+        /// owner only controls the shared hold loop; hit events are dispatched
+        /// separately when the first record is replaced.
+        /// </summary>
+        internal static void SetAutoplaySkyHoldActive(bool active)
+        {
+            _autoplayActive = active;
+            UpdateHoldBus();
+        }
+
+        private static void UpdateHoldBus()
+        {
+            if (!TryGetHoldBusRunning(out bool running))
+                return;
+            bool desired = _managedActive || _autoplayActive;
+            if (desired)
+            {
+                // Native may stop the shared bus after autoplay rewrites the
+                // sky records. Re-arm it while an owner still wants the loop;
+                // the end-of-owner path below is the only place that stops it.
+                if (running)
+                    return;
+                int frame = UnityEngine.Time.frameCount;
+                if (frame == _lastStartFrame)
+                    return;
+                _lastStartFrame = frame;
+                if (Dispatch(HoldEventType, true))
+                    _busStartedByMod = true;
+                return;
+            }
+            // Only the owner that started the bus may stop it. Native-only
+            // ownership is left untouched.
+            if (_busStartedByMod && Dispatch(HoldEventType, false))
+                _busStartedByMod = false;
+        }
+
+        private static bool TryGetHoldBusRunning(out bool running)
+        {
+            running = false;
             Il2Cppifapp.Game.Scenes.GameScene scene =
                 Il2Cppifapp.Game.Scenes.GameScene._xn;
             if (scene is null || scene.Pointer == IntPtr.Zero)
-                return;
+                return false;
             IntPtr bus = Marshal.ReadIntPtr(
                 scene.Pointer +
                 NativeLayoutCatalog.GameSceneAudio.HoldBus);
-            bool running =
+            running =
                 bus != IntPtr.Zero &&
                 Marshal.ReadInt32(
                     bus +
                     NativeLayoutCatalog.GameSceneAudio.HoldBusRunning) != 0;
-            if (independentActive)
-            {
-                _holdActive = true;
-                if (!nativeActive &&
-                    !running &&
-                    Dispatch(HoldEventType, true))
-                {
-                    _holdActive = true;
-                }
-                return;
-            }
-
-            if (nativeActive)
-            {
-                // Native event 5 owns the bus in a native-only state.
-                _holdActive = false;
-                return;
-            }
-
-            if (_holdActive && Dispatch(HoldEventType, false))
-                _holdActive = false;
+            return true;
         }
 
         internal static void ResetForChartSwitch()
         {
+            if (_busStartedByMod)
+                Dispatch(HoldEventType, false);
             _errors = 0;
-            _holdActive = false;
+            _managedActive = false;
+            _autoplayActive = false;
+            _busStartedByMod = false;
+            _lastStartFrame = -1;
         }
 
         private static unsafe bool Dispatch(byte eventType, bool value)

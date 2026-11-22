@@ -974,7 +974,7 @@ namespace InFalsusChartExt
                 SkyBlockFeedbackRuntime.PlayHit();
         }
 
-        private static unsafe bool EnqueuePresentation(
+        internal static unsafe bool EnqueuePresentation(
             long noteId, long recordIndex, Vector3 position)
         {
             if (_presentationEnqueueMethod == IntPtr.Zero ||
@@ -1206,6 +1206,12 @@ namespace InFalsusChartExt
                 }
             }
         }
+
+        internal static bool EnsureNativePresentationQueue(
+            Il2Cpp_E._VD judge) =>
+            judge is not null &&
+            judge.Pointer != IntPtr.Zero &&
+            EnsurePresentationQueue(judge);
 
         private static SkyBlockPlan CurrentPlan()
         {

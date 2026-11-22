@@ -10,6 +10,8 @@ namespace InFalsusChartExt
         private static readonly Dictionary<long, ChartExtState.SideSlot>
             SlotsById =
                 new Dictionary<long, ChartExtState.SideSlot>(256);
+        private static readonly HashSet<long> BoundIds =
+            new HashSet<long>();
         private static int _generation = -1;
         private static int _boundMembers = -1;
 
@@ -20,13 +22,14 @@ namespace InFalsusChartExt
                 _boundMembers == plan.Members.Count)
                 return true;
             if (ChartExtState.SkyAreaSlots.Count == 0)
-                return false;
+                return true;
 
             int expected = plan.Members.Count;
             if (expected == 0) return true;
             if (_generation != plan.Generation)
             {
                 SlotsById.Clear();
+                BoundIds.Clear();
                 _generation = plan.Generation;
                 _boundMembers = -1;
             }
@@ -48,14 +51,17 @@ namespace InFalsusChartExt
             {
                 SkyBlockMember member = plan.Members[i];
                 if (member.Side >= 0 && member.Position >= 0)
+                {
+                    BoundIds.Add(member.Id);
                     continue;
+                }
                 if (!SlotsById.TryGetValue(
                         member.Id,
                         out ChartExtState.SideSlot slot))
-                    return false;
+                    continue;
                 IntPtr basePtr =
                     NativeNoteSlotTable.SlotBase(slot.Side);
-                if (basePtr == IntPtr.Zero) return false;
+                if (basePtr == IntPtr.Zero) continue;
                 IntPtr note = basePtr +
                     slot.Position *
                     NativeLayoutCatalog.NoteStride;
@@ -64,13 +70,17 @@ namespace InFalsusChartExt
                         member.Id ||
                     Marshal.ReadInt32(
                         note + NativeLayoutCatalog.Note.Type) != 5)
-                    return false;
+                    continue;
                 member.Side = slot.Side;
                 member.Position = slot.Position;
+                BoundIds.Add(member.Id);
             }
             _boundMembers = plan.Members.Count;
             return true;
         }
+
+        internal static bool IsBound(long id)
+            => BoundIds.Contains(id);
 
         internal static bool TryNote(
             SkyBlockMember member, out IntPtr note)
@@ -98,6 +108,7 @@ namespace InFalsusChartExt
         internal static void Reset()
         {
             SlotsById.Clear();
+            BoundIds.Clear();
             _generation = -1;
             _boundMembers = -1;
         }

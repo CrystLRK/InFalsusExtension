@@ -13,6 +13,7 @@ namespace InFalsusChartExt
         private static bool _freezeActive;
         private static bool _resultSuppression;
         private static bool _showResultMarker;
+        private static string _resultLabel = "AUTOPLAY";
         private static bool _guardUnavailable;
         private static float _guardWarningUntil;
         private static GUIStyle _markerStyle;
@@ -30,6 +31,8 @@ namespace InFalsusChartExt
 
         internal static bool ResultScreenSuppression =>
             _resultSuppression && SuppressScores;
+
+        internal static string ResultLabel => _resultLabel;
 
         /// <summary>
         /// Clears an unfinished previous run when a new gameplay chart starts.
@@ -55,6 +58,7 @@ namespace InFalsusChartExt
             _freezeActive = false;
             _resultSuppression = false;
             _showResultMarker = false;
+            _resultLabel = "AUTOPLAY";
         }
 
         /// <summary>
@@ -111,9 +115,21 @@ namespace InFalsusChartExt
                 return;
             _usedThisChart = true;
             _freezeActive = true;
+            _resultLabel = BuildResultLabel();
             ChartExtMod.Log.Msg(
                 "[ChartExt] autoplay score suppression latched " +
                 "after the first simulated input");
+        }
+
+        private static string BuildResultLabel()
+        {
+            string mode =
+                AutoplayRuntime.Mode == AutoplayMode.Engine
+                    ? "ENGINE"
+                    : "AUTO";
+            return AutoplayRuntime.GroundOnly
+                ? $"AUTOPLAY ({mode} / GROUND ONLY)"
+                : $"AUTOPLAY ({mode})";
         }
 
         internal static void CompleteResultsStart()
@@ -158,13 +174,14 @@ namespace InFalsusChartExt
                         _markerStyle.normal.textColor =
                             new Color(1f, 0.86f, 0.25f, 1f);
                     }
+                    const float markerWidth = 520f;
                     GUI.Label(
                         new Rect(
-                            Math.Max(0f, Screen.width - 320f),
+                            Math.Max(0f, Screen.width - markerWidth - 24f),
                             18f,
-                            288f,
+                            markerWidth,
                             50f),
-                        "AUTOPLAY",
+                        _resultLabel,
                         _markerStyle);
                 }
                 if (_guardUnavailable &&
