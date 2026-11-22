@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 
@@ -327,8 +329,10 @@ namespace InFalsusChartExt
                 foreach (Icp1Codec.Event ev in chart.Events)
                 {
                     int currentEventOrder = eventSourceOrder++;
-                    // timinggroup 组内变速（type5，value1=double 倍率，value2=float 组号）：
-                    // 剥离进状态，运行期用它合成该组独立的 W(t)=∫speed dt 时间线。
+                    // timinggroup 组内变速（type5，value1=double 倍率，
+                    // value2 低 32 位=float 组号，高 32 位=float 组 BPM）：
+                    // 剥离进状态，运行期用它合成该组独立的 W(t)=∫speed dt
+                    // 时间线；组 BPM 只用于长音符 record 密度。
                     if (ev.Type == 5)
                     {
                         ChartExtState.GroupSpeeds.Add(new ChartExtState.GroupSpeed
@@ -336,6 +340,8 @@ namespace InFalsusChartExt
                             TimeMs = ev.TimeMs,
                             Group = (int)BitConverter.Int32BitsToSingle((int)(uint)ev.Value2),
                             Mult = BitConverter.Int64BitsToDouble((long)ev.Value1),
+                            Bpm = BitConverter.Int32BitsToSingle(
+                                (int)(uint)(ev.Value2 >> 32)),
                             SourceOrder = currentEventOrder,
                         });
                         continue;
@@ -364,10 +370,8 @@ namespace InFalsusChartExt
                 for (int i = 0; i < keptEvents.Count; i++)
                     keptEvents[i].Id = (ulong)i;
 
-                // Speed events (track(...), v1 type 0): multiplier is a double in Value1.
-                // The game maps the scroll as (time-left x current multiplier) - including
-                // the position jump at each event; the bomb visual must read the same
-                // timeline (see WarpedMs / ChartExtState.SpeedEvents in BombSkin.cs).
+                // 全局视觉速度由 track(type0) 决定；bpm(type1/2) 只负责
+                // 小节线，不进入 W_global。
                 for (int speedOrder = 0;
                      speedOrder < keptEvents.Count;
                      speedOrder++)
@@ -516,6 +520,20 @@ namespace InFalsusChartExt
                         ChartExtState.BombIds.Add(i);
                 }
 
+                // L2：组时间线起点 = 组内第一个 note 的 start。
+                ChartExtState.GroupOrigins.Clear();
+                for (int i = 0; i < keptNotes.Count; i++)
+                {
+                    int timingGroup = ChartExtState.TimingGroupOf(i);
+                    if (timingGroup <= 0)
+                        continue;
+                    double start = keptNotes[i].StartMs;
+                    if (!ChartExtState.GroupOrigins.TryGetValue(
+                            timingGroup, out double current) ||
+                        start < current)
+                        ChartExtState.GroupOrigins[timingGroup] = start;
+                }
+
                 if (visualNotes.Count > 0)
                 {
                     ChartExtMod.Log.Msg(
@@ -578,7 +596,7 @@ namespace InFalsusChartExt
                     LogOnce(source, key, length, Head(data), "passthrough(no extension content)", null);
                     return;
                 }
-
+                NormalizeGlobalNegativeBpm(chart);
                 byte[] encoded = Icp1Codec.Encode(chart, key);
                 var managed = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte>(encoded);
                 PinSpanArray(managed);
@@ -611,6 +629,83 @@ namespace InFalsusChartExt
                     span = originalSpan;
                 if (_logged < 80) { _logged++; ChartExtMod.Log.Error($"[ChartExt] transform failed ({source}): {e}"); }
             }
+        }
+
+        /// <summary>
+        /// 全局负 BPM：小节线按 |bpm| 正向推进，速度取反为负 track。
+        /// 负 BPM 事件本身不进入引擎（避免 _pb 生成负间隔 record）。
+        /// 只处理全局 type1/2；组内 BPM 走 type5，不经过这里。
+        /// </summary>
+        private static void NormalizeGlobalNegativeBpm(
+            Icp1Codec.Chart chart)
+        {
+            double chartBpm =
+                BitConverter.Int32BitsToSingle((int)chart.U20);
+            if (!(chartBpm > 0.0) ||
+                double.IsNaN(chartBpm) ||
+                double.IsInfinity(chartBpm))
+                return;
+
+            var added = new List<Icp1Codec.Event>();
+            for (int i = 0; i < chart.Events.Count; i++)
+            {
+                Icp1Codec.Event ev = chart.Events[i];
+                if (ev.Type != 1 && ev.Type != 2)
+                    continue;
+                double bpm = BitConverter.Int64BitsToDouble((long)ev.Value1);
+                if (!(bpm < 0.0) ||
+                    double.IsNaN(bpm) ||
+                    double.IsInfinity(bpm))
+                    continue;
+                ev.Value1 = (ulong)BitConverter
+                    .DoubleToInt64Bits(-bpm);
+                double trackMult = bpm / chartBpm;
+                added.Add(new Icp1Codec.Event
+                {
+                    TimeMs = ev.TimeMs,
+                    Type = 0,
+                    Value1 = (ulong)BitConverter
+                        .DoubleToInt64Bits(trackMult),
+                    Value2 = 0,
+                });
+                // Mod 自己的速度曲线必须与交给引擎的载荷一致，
+                // 否则 WGlobal 会把负速段当成 0 速，视觉投影随之错位。
+                ChartExtState.SpeedEvents.Add(new ChartExtState.SpeedEvent
+                {
+                    TimeMs = ev.TimeMs,
+                    Mult = trackMult,
+                    SourceOrder = ChartExtState.SpeedEvents.Count,
+                });
+            }
+            if (added.Count == 0)
+                return;
+            ChartExtState.SpeedEvents.Sort(CompareTimeAndOrder);
+
+            var merged = new List<(Icp1Codec.Event Event, int Priority, int Seq)>(
+                chart.Events.Count + added.Count);
+            for (int i = 0; i < chart.Events.Count; i++)
+                merged.Add((chart.Events[i], 0, i));
+            for (int i = 0; i < added.Count; i++)
+                merged.Add((added[i], 1, chart.Events.Count + i));
+            merged.Sort((a, b) =>
+            {
+                int order = a.Event.TimeMs.CompareTo(b.Event.TimeMs);
+                if (order != 0)
+                    return order;
+                order = a.Priority.CompareTo(b.Priority);
+                if (order != 0)
+                    return order;
+                return a.Seq.CompareTo(b.Seq);
+            });
+            chart.Events.Clear();
+            for (int i = 0; i < merged.Count; i++)
+            {
+                merged[i].Event.Id = (ulong)i;
+                chart.Events.Add(merged[i].Event);
+            }
+            ChartExtMod.Log.Msg(
+                $"[ChartExt] global negative bpm: {added.Count} " +
+                "segment(s) use |bpm| for bars and negative track");
         }
 
         private static bool IsCustomChartKey(string key)
@@ -853,6 +948,7 @@ namespace InFalsusChartExt
             // 每次编译重新锁存槽位，避免重复编译时累积。
             ChartExtState.SkyAreaSlots.Clear();
             ChartExtState.GroupedSlots.Clear();
+            ChartExtState.NegativeSpeedSlots.Clear();
         }
 
         [HarmonyPostfix]
@@ -872,6 +968,7 @@ namespace InFalsusChartExt
                 {
                     return;
                 }
+                // L4 改在首帧渲染执行（编译 Postfix 时运行期数据尚未定型）。
 
                 var sides = compiled._vC;
                 if (sides == null)
@@ -918,10 +1015,33 @@ namespace InFalsusChartExt
                                 Id = id,
                                 Group = timingGroup,
                                 Type = (int)notes[i]._be,
+                                StartMs = notes[i]._Be,
+                                EndMs = notes[i]._ce,
                                 CompiledOwner = compiled.Pointer,
                                 CompileGeneration =
                                     ChartExtState.CompileGeneration,
                             });
+                        int noteType = (int)notes[i]._be;
+                        if (noteType == 2 || noteType == 5)
+                        {
+                            ChartExtState.NegativeSpeedSlots.Add(
+                                new ChartExtState.NegativeSlot
+                                {
+                                    Side = side,
+                                    Position = i,
+                                    Type = noteType,
+                                    Group = ChartExtState.TimingGroupOf(id),
+                                    Id = id,
+                                    StartMs = Marshal.ReadInt32(
+                                        notesData +
+                                        i * NativeLayoutCatalog.NoteStride +
+                                        NativeLayoutCatalog.Note.StartMs),
+                                    EndMs = Marshal.ReadInt32(
+                                        notesData +
+                                        i * NativeLayoutCatalog.NoteStride +
+                                        NativeLayoutCatalog.Note.EndMs),
+                                });
+                        }
                         // autoplay：锁存所有可判定音符（Bomb 除外）的
                         // (时间, id, 槽位)。
                         if (allowAutoplay &&

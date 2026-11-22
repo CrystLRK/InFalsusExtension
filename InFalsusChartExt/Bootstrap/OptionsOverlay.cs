@@ -30,6 +30,8 @@ namespace InFalsusChartExt
         private static PluginConfigEntry<bool> _skyMergeAuthoredEntry;
         private static PluginConfigEntry<bool> _skySharedBranchJudgementEntry;
         private static PluginConfigEntry<float> _skyOverlapHitPaddingEntry;
+        private static PluginConfigEntry<bool> _negativeSpeedEntry;
+        private static PluginConfigEntry<bool> _hideNoInputBracketsEntry;
         private static int _errors;
 
         internal static void Init()
@@ -64,6 +66,17 @@ namespace InFalsusChartExt
                     "重叠 SkyArea 判定扩展",
                     "同一判定层内空间重叠时，每侧额外扩大的归一化范围；"
                     + "仅影响判定，不影响渲染。修改后需重启游戏。");
+                _negativeSpeedEntry = _category.Bind(
+                    "EnableNegativeSpeedModify", true,
+                    "负流速 Hold/SkyArea 反向视觉",
+                    "默认开启：负流速下 Hold/SkyArea 从判定线近侧出现，"
+                    + "判定中固定在判定线并收缩。关闭并重启后恢复原版"
+                    + "（原版负速 Hold 会抛异常）。");
+                _hideNoInputBracketsEntry = _category.Bind(
+                    "HideNoInputBrackets", true,
+                    "隐藏 noinput/noclip SkyArea 方括号",
+                    "默认开启：noinput / noclip 的 SkyArea 不显示入口"
+                    + "方括号；条带本体、端帽、影子与判定不变。");
                 DisplayModeRuntime.Initialize(_category);
                 AutoplayScoreGuard.SuppressScores =
                     !_autoplaySaveScoresEntry.Value;
@@ -80,6 +93,10 @@ namespace InFalsusChartExt
                 SkyBlockPolicy.OverlapHitPadding = Math.Max(
                     0f,
                     Math.Min(0.5f, _skyOverlapHitPaddingEntry.Value));
+                NegativeSpeedVisualRuntime.Enabled =
+                    _negativeSpeedEntry.Value;
+                TimingNoInputSkyVisualRuntime.HideBrackets =
+                    _hideNoInputBracketsEntry.Value;
             }
             catch (Exception e)
             {

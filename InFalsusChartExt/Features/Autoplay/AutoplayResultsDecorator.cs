@@ -94,7 +94,7 @@ namespace InFalsusChartExt
                 if (text is null)
                     continue;
                 text.SetTextNonLocalized(
-                    "AUTOPLAY",
+                    AutoplayScoreGuard.ResultLabel,
                     Il2CppFastText.FastText.UpdateType.Default);
             }
         }

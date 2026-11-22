@@ -15,9 +15,20 @@ namespace InFalsusChartExt
     /// </summary>
     internal static class TimingNoInputSkyVisualRuntime
     {
+        /// <summary>
+        /// 默认开启：noinput / noclip SkyArea 不显示入口方括号。
+        /// </summary>
+        internal static bool HideBrackets = true;
+        private static int _diagLogs;
+
         private const double BracketLeadMinMs = 5.0;
         private const double JoinTimeToleranceMs = 2.0;
         private const float JoinSpaceTolerance = 1e-9f;
+        // SkySafeArea 的 _KZ 网格缓存键（与 NegativeSpeedVisualRuntime 一致）。
+        private const int SkyCacheKeyOffset = 0x58;
+        private const double SkyCacheInvalid = -2.0;
+        private static int _negDebugLogs;
+        private static int _meshDebugLogs;
 
         private sealed class Entry
         {
@@ -25,8 +36,12 @@ namespace InFalsusChartExt
             public long AuthoredGroup;
             public GameObject Band;
             public GameObject Shadow;
+            public Transform BandTransform;
+            public Transform ShadowTransform;
             public GameObject LeftBracket;
             public GameObject RightBracket;
+            public Transform LeftBracketTransform;
+            public Transform RightBracketTransform;
             public Il2Cppifapp.Game.Scenes.Game.SkySafeArea BandArea;
             public Il2Cppifapp.Game.Scenes.Game.SkySafeArea ShadowArea;
             public Il2Cppifapp.Game.Scenes.Game.SafeAreaColorDetails BaseColorDetails;
@@ -47,6 +62,8 @@ namespace InFalsusChartExt
             public VisualNoteLifetime Lifetime;
             public int StartMs;
             public int EndMs;
+            public double VisualStartMs;
+            public double VisualEndMs;
             public float StartLo;
             public float StartHi;
             public float EndLo;
@@ -69,9 +86,14 @@ namespace InFalsusChartExt
             new Dictionary<long, RangeInfo>();
         private static readonly List<RangeInfo> OrderedRanges =
             new List<RangeInfo>();
+        private static readonly List<RangeInfo> ActiveRanges =
+            new List<RangeInfo>();
         private static readonly List<long> DeadIds = new List<long>();
         private static int _generation = -1;
         private static int _errors;
+        private static int _rangeCursor;
+        private static double _lastRangeNow = double.NaN;
+        private const double RangeWindowMarginMs = 15000.0;
 
         internal static unsafe void Tick(
             Il2Cppifapp.Game.Scenes.Game.Track track)
@@ -96,9 +118,35 @@ namespace InFalsusChartExt
                     return;
 
                 int frame = Time.frameCount;
-                for (int i = 0; i < OrderedRanges.Count; i++)
+                double addUntil =
+                    now + maxLeadMs + RangeWindowMarginMs;
+                double keepFrom =
+                    now - noClipTailMs - RangeWindowMarginMs;
+                if (double.IsNaN(_lastRangeNow) ||
+                    now + 2000.0 < _lastRangeNow ||
+                    now > _lastRangeNow + 5000.0)
                 {
-                    RangeInfo info = OrderedRanges[i];
+                    _rangeCursor = 0;
+                    ActiveRanges.Clear();
+                }
+                while (_rangeCursor < OrderedRanges.Count &&
+                       OrderedRanges[_rangeCursor].VisualStartMs <= addUntil)
+                {
+                    RangeInfo candidate = OrderedRanges[_rangeCursor++];
+                    if (candidate.VisualEndMs >= keepFrom)
+                        ActiveRanges.Add(candidate);
+                }
+                for (int i = ActiveRanges.Count - 1; i >= 0; i--)
+                {
+                    if (ActiveRanges[i].VisualEndMs >= keepFrom) continue;
+                    ActiveRanges[i] = ActiveRanges[ActiveRanges.Count - 1];
+                    ActiveRanges.RemoveAt(ActiveRanges.Count - 1);
+                }
+                _lastRangeNow = now;
+
+                for (int i = 0; i < ActiveRanges.Count; i++)
+                {
+                    RangeInfo info = ActiveRanges[i];
                     long visualId = info.Id;
                     bool noClip =
                         info.Lifetime == VisualNoteLifetime.NoClip;
@@ -119,6 +167,15 @@ namespace InFalsusChartExt
                             out double durationMs,
                             out double progress))
                         continue;
+                    if (_diagLogs < 24 && leadMs > 0.0 && leadMs < 4000.0)
+                    {
+                        _diagLogs++;
+                        ChartExtMod.Log.Msg(
+                            $"[diag-sky] id={visualId} group={timingGroup}" +
+                            $" start={info.StartMs} end={info.EndMs}" +
+                            $" lead={leadMs:F1} dur={durationMs:F1}" +
+                            $" prog={progress:F3}");
+                    }
                     if (noClip)
                     {
                         // Noclip disables judgement-line consumption entirely.
@@ -198,8 +255,11 @@ namespace InFalsusChartExt
             progress = 0.0;
             if (double.IsNaN(visualNow) ||
                 double.IsNaN(visualStart) ||
-                double.IsNaN(visualEnd) ||
-                visualEnd <= visualStart)
+                double.IsNaN(visualEnd))
+                return false;
+            // 负速组里 W(t) 单调递减，visualEnd < visualStart；
+            // 这是合法跨度，长度取负值后由 UpdateEntry 渲染到线后。
+            if (Math.Abs(visualEnd - visualStart) < 1e-9)
                 return false;
 
             // The scroll lead belongs entirely to this timing group.
@@ -229,6 +289,9 @@ namespace InFalsusChartExt
             DestroyAll();
             Ranges.Clear();
             OrderedRanges.Clear();
+            ActiveRanges.Clear();
+            _rangeCursor = 0;
+            _lastRangeNow = double.NaN;
             BuildRanges();
             _generation = generation;
             return Ranges.Count > 0;
@@ -239,7 +302,10 @@ namespace InFalsusChartExt
             DestroyAll();
             Ranges.Clear();
             OrderedRanges.Clear();
+            ActiveRanges.Clear();
             DeadIds.Clear();
+            _rangeCursor = 0;
+            _lastRangeNow = double.NaN;
             _generation = -1;
         }
 
@@ -279,14 +345,22 @@ namespace InFalsusChartExt
                         descriptor.EndWidth * 0.5),
                     Descriptor = descriptor,
                 };
+                info.VisualStartMs = TimingGroupRuntime.VisualTimeMs(
+                    info.TimingGroup, info.StartMs);
+                info.VisualEndMs = TimingGroupRuntime.VisualTimeMs(
+                    info.TimingGroup, info.EndMs);
+                if (!double.IsFinite(info.VisualStartMs))
+                    info.VisualStartMs = info.StartMs;
+                if (!double.IsFinite(info.VisualEndMs))
+                    info.VisualEndMs = info.EndMs;
                 OrderedRanges.Add(info);
                 Ranges[info.Id] = info;
             }
             OrderedRanges.Sort((a, b) =>
             {
-                int c = a.StartMs.CompareTo(b.StartMs);
+                int c = a.VisualStartMs.CompareTo(b.VisualStartMs);
                 if (c != 0) return c;
-                c = a.EndMs.CompareTo(b.EndMs);
+                c = a.VisualEndMs.CompareTo(b.VisualEndMs);
                 return c != 0 ? c : a.Id.CompareTo(b.Id);
             });
 
@@ -546,11 +620,13 @@ namespace InFalsusChartExt
                     track, track.safeAreaShadowPrefab,
                     $"IFCE_NoInputSkyShadow_{id}",
                     entry.OwnedMaterials);
-                if (entry.Band == null || entry.Shadow == null)
+                if (entry.Band is null || entry.Shadow is null)
                 {
                     DestroyEntry(entry);
                     return null;
                 }
+                entry.BandTransform = entry.Band.transform;
+                entry.ShadowTransform = entry.Shadow.transform;
                 entry.BandArea =
                     entry.Band.GetComponent<
                         Il2Cppifapp.Game.Scenes.Game.SkySafeArea>();
@@ -560,7 +636,7 @@ namespace InFalsusChartExt
                 if (entry.BandArea != null)
                 {
                     entry.BaseColorDetails = entry.BandArea.colorDetails;
-                    if (entry.BaseColorDetails == null)
+                    if (entry.BaseColorDetails is null)
                         entry.BaseColorDetails = track.safeAreaColorDetails;
                     entry.BandArea.colorDetails = entry.BaseColorDetails;
                 }
@@ -640,13 +716,48 @@ namespace InFalsusChartExt
             double trackScale = trackLength / 3.333333334;
             double visualScale = trackScale * speed;
             double zPerMs = visualScale / 1000.0;
-            double durationSeconds = Math.Max(0.0, durationMs) / 1000.0;
             float bandZScale = (float)visualScale;
             float shadowZScale = (float)trackScale;
+            double durationSeconds = durationMs / 1000.0;
             double visualLength = durationSeconds * visualScale;
+            double anchorLead = leadMs;
+            double bandProgress = progress;
+            double anchorSeconds = leadMs;
+            bool mirroredBand = false;
+            if (durationMs < 0.0)
+            {
+                // 负速组：整条带长度不变，只在判定线处逐段消耗。
+                // 用 progress（0..1）交给 _KZ 裁剪，网格与材质做
+                // 轴对称；锚点保持在头部，长度取正值。
+                visualLength = Math.Abs(
+                    durationSeconds * visualScale);
+                anchorLead = leadMs;
+                bandProgress = progress;
+                anchorSeconds = leadMs;
+                mirroredBand = true;
+                // 条带锚在尾端时，_fA 的运行时 lead 也必须同步为尾端，
+                // 否则 _KZ 会按头部时间与尾端长度错配，把条带压扁。
+                note._Ee = anchorSeconds;
+                if (_negDebugLogs < 120)
+                {
+                    _negDebugLogs++;
+                    ChartExtMod.Log.Msg(
+                        "[noinput-debug] id=" + entry.Id +
+                        " now=" + nowMs.ToString("F1") +
+                        " leadS=" + leadMs.ToString("F3") +
+                        " dur=" + durationMs.ToString("F3") +
+                        " progress=" + progress.ToString("F4") +
+                        " len=" + visualLength.ToString("F4") +
+                        " z=" + (zPerMs * anchorLead).ToString("F3"));
+                }
+            }
             double chartSeconds = nowMs / 1000.0;
             double noteStartSeconds =
-                chartSeconds + leadMs / 1000.0;
+                chartSeconds + anchorSeconds / 1000.0;
+            Vector2 rangePrev = mirroredBand
+                ? Vector2.zero : entry.PreviousRange;
+            Vector2 rangeNext = mirroredBand
+                ? Vector2.zero : entry.NextRange;
 
             if (entry.BandArea != null)
             {
@@ -670,6 +781,8 @@ namespace InFalsusChartExt
 
             if (entry.BandArea != null)
             {
+                if (durationMs < 0.0)
+                    InvalidateSkyCache(entry.BandArea);
                 entry.BandArea._KZ(
                     ref note,
                     bandScale,
@@ -678,23 +791,58 @@ namespace InFalsusChartExt
                     visualLength,
                     bandZScale,
                     0f,
-                    progress,
-                    entry.PreviousRange,
-                    entry.NextRange);
+                    bandProgress,
+                    rangePrev,
+                    rangeNext);
                 Vector3 zero = ReadVector3(
                     track.Pointer + NativeLayoutCatalog.Track.RestPosition);
                 float x = -bandScale * 0.5f +
                           bandScale * note._Ce._LD;
-                float z = (float)(zPerMs * leadMs);
-                Transform tr = entry.Band.transform;
+                float z = (float)(zPerMs * anchorLead);
+                Transform tr = entry.BandTransform;
+                if (tr == null) tr = entry.Band.transform;
                 tr.localPosition = new Vector3(
                     zero.x + x, zero.y,
                     zero.z + z);
                 if (!entry.Band.activeSelf) entry.Band.SetActive(true);
+                if (durationMs < 0.0)
+                {
+                    MirrorArea(entry.BandArea, entry.Band);
+                    if (_meshDebugLogs < 60)
+                    {
+                        _meshDebugLogs++;
+                        try
+                        {
+                            MeshFilter filter = entry.BandArea.meshFilter;
+                            Mesh mesh = filter == null
+                                ? null : filter.sharedMesh;
+                            if (mesh != null &&
+                                mesh.Pointer != IntPtr.Zero)
+                            {
+                                Bounds b = mesh.bounds;
+                                ChartExtMod.Log.Msg(
+                                    "[noinput-mesh] id=" + entry.Id +
+                                    " want=" +
+                                    visualLength.ToString("F4") +
+                                    " size=(" +
+                                    b.size.x.ToString("F3") + "," +
+                                    b.size.y.ToString("F3") + "," +
+                                    b.size.z.ToString("F3") + ")" +
+                                    " center=(" +
+                                    b.center.x.ToString("F3") + "," +
+                                    b.center.y.ToString("F3") + "," +
+                                    b.center.z.ToString("F3") + ")");
+                            }
+                        }
+                        catch { }
+                    }
+                }
             }
 
             if (entry.ShadowArea != null)
             {
+                if (durationMs < 0.0)
+                    InvalidateSkyCache(entry.ShadowArea);
                 entry.ShadowArea._KZ(
                     ref note,
                     shadowScale,
@@ -703,20 +851,101 @@ namespace InFalsusChartExt
                     visualLength,
                     shadowZScale,
                     0f,
-                    progress,
-                    entry.PreviousRange,
-                    entry.NextRange);
+                    bandProgress,
+                    rangePrev,
+                    rangeNext);
                 Vector3 zero = ReadVector3(
                     track.Pointer + NativeLayoutCatalog.Track.HomePosition);
                 float x = -shadowScale * 0.5f +
                           shadowScale * note._Ce._LD;
-                float z = (float)(zPerMs * leadMs);
-                Transform tr = entry.Shadow.transform;
+                float z = (float)(zPerMs * anchorLead);
+                Transform tr = entry.ShadowTransform;
+                if (tr == null) tr = entry.Shadow.transform;
                 tr.localPosition = new Vector3(
                     zero.x + x, zero.y,
                     zero.z + z);
                 if (!entry.Shadow.activeSelf) entry.Shadow.SetActive(true);
+                if (durationMs < 0.0)
+                    MirrorArea(entry.ShadowArea, entry.Shadow);
             }
+        }
+
+        private static void InvalidateSkyCache(
+            Il2Cppifapp.Game.Scenes.Game.SkySafeArea area)
+        {
+            try
+            {
+                if (area == null || area.Pointer == IntPtr.Zero) return;
+                Marshal.WriteInt64(
+                    area.Pointer + SkyCacheKeyOffset,
+                    BitConverter.DoubleToInt64Bits(SkyCacheInvalid));
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 负速条带的轴对称：沿局部 Y（长度轴）镜像网格并反转三角形
+        /// 绕序，同时把材质的可见区间映射到 p -> -p。
+        /// </summary>
+        private static void MirrorArea(
+            Il2Cppifapp.Game.Scenes.Game.SkySafeArea area,
+            GameObject go)
+        {
+            try
+            {
+                if (area == null || area.Pointer == IntPtr.Zero) return;
+                MeshFilter filter = area.meshFilter;
+                if (filter == null && go != null &&
+                    go.Pointer != IntPtr.Zero)
+                {
+                    try { filter = go.GetComponent<MeshFilter>(); }
+                    catch { }
+                }
+                Mesh mesh = filter == null ? null : filter.sharedMesh;
+                if (mesh == null || mesh.Pointer == IntPtr.Zero) return;
+                Vector3[] vertices = mesh.vertices;
+                if (vertices == null || vertices.Length == 0) return;
+                for (int i = 0; i < vertices.Length; i++)
+                {
+                    Vector3 v = vertices[i];
+                    v.y = -v.y;
+                    vertices[i] = v;
+                }
+                mesh.vertices = vertices;
+                int[] triangles = mesh.triangles;
+                if (triangles != null)
+                {
+                    for (int i = 0; i + 2 < triangles.Length; i += 3)
+                    {
+                        int swap = triangles[i + 1];
+                        triangles[i + 1] = triangles[i + 2];
+                        triangles[i + 2] = swap;
+                    }
+                    mesh.triangles = triangles;
+                }
+                mesh.RecalculateBounds();
+                MeshRenderer renderer = area.meshRenderer;
+                if (renderer == null && go != null &&
+                    go.Pointer != IntPtr.Zero)
+                {
+                    try { renderer = go.GetComponent<MeshRenderer>(); }
+                    catch { }
+                }
+                Material material = renderer == null
+                    ? null
+                    : renderer.material;
+                if (material == null ||
+                    material.Pointer == IntPtr.Zero) return;
+                if (!material.HasProperty("_VisualStart") ||
+                    !material.HasProperty("_VisualLength")) return;
+                float start = material.GetFloat("_VisualStart");
+                float length = material.GetFloat("_VisualLength");
+                if (float.IsNaN(start) || float.IsNaN(length) ||
+                    float.IsInfinity(start) || float.IsInfinity(length))
+                    return;
+                material.SetFloat("_VisualStart", -(start + length));
+            }
+            catch { }
         }
 
         private static void UpdateBrackets(
@@ -724,6 +953,11 @@ namespace InFalsusChartExt
             Entry entry, ref Il2Cpp_b._fA note,
             double leadMs, double maxLeadMs)
         {
+            if (HideBrackets)
+            {
+                SetBracketsActive(entry, false);
+                return;
+            }
             bool visible = entry.IsHead &&
                            entry.HeadInBounds &&
                            note._Ee > BracketLeadMinMs &&
@@ -733,32 +967,41 @@ namespace InFalsusChartExt
                 SetBracketsActive(entry, false);
                 return;
             }
-            if (entry.LeftBracket == null)
+            if (entry.LeftBracket is null)
                 CreateBrackets(track, entry);
-            if (entry.LeftBracket == null ||
-                entry.RightBracket == null)
+            if (entry.LeftBracket is null ||
+                entry.RightBracket is null)
                 return;
-            if (entry.Band == null ||
+            if (entry.Band is null ||
                 entry.Band.Pointer == IntPtr.Zero)
                 return;
 
             float bandScale = BitConverter.Int32BitsToSingle(
                 Marshal.ReadInt32(
                     track.Pointer + NativeLayoutCatalog.Track.TrackWidth));
+            Transform bandTransform = entry.BandTransform;
+            if (bandTransform == null)
+                bandTransform = entry.Band.transform;
             Vector3 bandPosition =
-                entry.Band.transform.localPosition;
+                bandTransform.localPosition;
             Quaternion rotation =
                 ReadQuaternion(
                     track.Pointer + NativeLayoutCatalog.Track.RestRotation);
             float halfWidth =
                 bandScale * Math.Abs(note._De._LD) * 0.5f;
 
-            entry.LeftBracket.transform.localPosition =
+            Transform leftBracket = entry.LeftBracketTransform;
+            if (leftBracket == null)
+                leftBracket = entry.LeftBracket.transform;
+            Transform rightBracket = entry.RightBracketTransform;
+            if (rightBracket == null)
+                rightBracket = entry.RightBracket.transform;
+            leftBracket.localPosition =
                 new Vector3(
                     bandPosition.x - halfWidth,
                     bandPosition.y,
                     bandPosition.z);
-            entry.RightBracket.transform.localPosition =
+            rightBracket.localPosition =
                 new Vector3(
                     bandPosition.x + halfWidth,
                     bandPosition.y,
@@ -792,6 +1035,8 @@ namespace InFalsusChartExt
                     $"IFCE_NoInputSkyBracketL_{entry.Id}";
                 entry.RightBracket.name =
                     $"IFCE_NoInputSkyBracketR_{entry.Id}";
+                entry.LeftBracketTransform = entry.LeftBracket.transform;
+                entry.RightBracketTransform = entry.RightBracket.transform;
                 Transform parent = track.notesContainer;
                 if (parent != null && parent.Pointer != IntPtr.Zero)
                 {

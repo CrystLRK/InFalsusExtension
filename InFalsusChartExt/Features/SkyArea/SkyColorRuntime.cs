@@ -54,6 +54,8 @@ namespace InFalsusChartExt
             new Dictionary<long, MeshRenderer>();
         private static readonly List<MeshRenderer> BracketRenderers =
             new List<MeshRenderer>();
+        private static readonly List<Transform> BracketTransforms =
+            new List<Transform>();
         private static readonly HashSet<long> BracketRendererPtrs =
             new HashSet<long>();
         private static readonly float[] SourceColor = new float[4];
@@ -72,6 +74,8 @@ namespace InFalsusChartExt
         private static int _bracketLogs;
         private static bool _bracketCacheReady;
         private static int _bracketCacheRefreshFrame;
+        private static int _bracketTintFrame = -10;
+        private static int _bracketZoneCount = -1;
 
         private struct ColorZone
         {
@@ -133,6 +137,8 @@ namespace InFalsusChartExt
                 _cursorRenderer = null;
                 _bracketCacheReady = false;
                 _bracketCacheRefreshFrame = 0;
+                _bracketTintFrame = -10;
+                _bracketZoneCount = -1;
                 _generation = -1;
             }
         }
@@ -227,16 +233,17 @@ namespace InFalsusChartExt
                     Rgba = rgba,
                     Bounds = renderer.bounds,
                 });
-                Transform parent = area.transform.parent;
-                if (parent != null &&
-                    (_notesContainer == null ||
-                     _notesContainer.Pointer != parent.Pointer))
+                if (_notesContainer == null)
                 {
-                    _notesContainer = parent;
-                    BracketRenderers.Clear();
-                    BracketRendererPtrs.Clear();
-                    _bracketCacheReady = false;
-                    _bracketCacheRefreshFrame = 0;
+                    Transform parent = area.transform.parent;
+                    if (parent != null)
+                    {
+                        _notesContainer = parent;
+                        BracketRenderers.Clear();
+                        BracketRendererPtrs.Clear();
+                        _bracketCacheReady = false;
+                        _bracketCacheRefreshFrame = 0;
+                    }
                 }
             }
             catch { }
@@ -272,23 +279,39 @@ namespace InFalsusChartExt
                 _propertyIdsReady = true;
             }
             if (_tintBlock == null || _clearBlock == null) return;
+            int tintFrame = Time.frameCount;
+            if (tintFrame - _bracketTintFrame < 2 &&
+                _bracketZoneCount == ActiveZones.Count)
+                return;
+            _bracketTintFrame = tintFrame;
+            _bracketZoneCount = ActiveZones.Count;
 
             if (_notesContainer != null &&
                 _notesContainer.Pointer != IntPtr.Zero)
             {
                 int frame = Time.frameCount;
-                if (!_bracketCacheReady ||
-                    frame >= _bracketCacheRefreshFrame)
+                if (!_bracketCacheReady)
                 {
                     RebuildBracketCache();
-                    _bracketCacheRefreshFrame = frame + 30;
+                    _bracketCacheRefreshFrame = frame + 120;
+                }
+                else if (BracketRenderers.Count == 0 &&
+                         frame >= _bracketCacheRefreshFrame)
+                {
+                    // The bracket pool is fixed after chart init. Rescanning
+                    // the whole notes hierarchy every 30 frames allocates a
+                    // string for every child; only retry while it is empty.
+                    RebuildBracketCache();
+                    _bracketCacheRefreshFrame = frame + 120;
                 }
                 int tinted = 0;
                 for (int i = 0; i < BracketRenderers.Count; i++)
                 {
                     MeshRenderer mr = BracketRenderers[i];
                     if (mr == null || mr.Pointer == IntPtr.Zero) continue;
-                    if (TryZoneColorAt(mr.transform.position, out uint rgba))
+                    Transform tr = BracketTransforms[i];
+                    if (tr == null || tr.Pointer == IntPtr.Zero) continue;
+                    if (TryZoneColorAt(tr.position, out uint rgba))
                     {
                         ApplyTint(mr, rgba);
                         tinted++;
@@ -357,6 +380,7 @@ namespace InFalsusChartExt
         private static void RebuildBracketCache()
         {
             BracketRenderers.Clear();
+            BracketTransforms.Clear();
             BracketRendererPtrs.Clear();
             int children;
             try { children = _notesContainer.childCount; }
@@ -393,7 +417,10 @@ namespace InFalsusChartExt
                         continue;
                     if (BracketRendererPtrs.Add(
                             renderer.Pointer.ToInt64()))
+                    {
                         BracketRenderers.Add(renderer);
+                        BracketTransforms.Add(renderer.transform);
+                    }
                 }
             }
             _bracketCacheReady = true;
@@ -596,6 +623,12 @@ namespace InFalsusChartExt
             float tg = ((rgba >> 16) & 0xFF) / 255f;
             float tb = ((rgba >> 8) & 0xFF) / 255f;
             float alphaScale = (rgba & 0xFF) / 255f;
+            Marshal.Copy(
+                source + FirstDefaultColorOffset,
+                SourceColor, 0, 4);
+            float mainLuminance = Luminance(SourceColor);
+            if (!(mainLuminance > 1e-4f))
+                mainLuminance = 1f;
             for (int i = 0; i < 4; i++)
             {
                 int offset = FirstDefaultColorOffset + i * DefaultColorStride;
@@ -611,15 +644,21 @@ namespace InFalsusChartExt
                             : EdgeGlowRedOffset), 4);
                     continue;
                 }
-                float luminance = 0.2126f * SourceColor[0] +
-                                  0.7152f * SourceColor[1] +
-                                  0.0722f * SourceColor[2];
-                OutputColor[0] = tr * luminance;
-                OutputColor[1] = tg * luminance;
-                OutputColor[2] = tb * luminance;
+                float scale = Luminance(SourceColor) / mainLuminance;
+                if (scale > 1f) scale = 1f;
+                OutputColor[0] = tr * scale;
+                OutputColor[1] = tg * scale;
+                OutputColor[2] = tb * scale;
                 OutputColor[3] = SourceColor[3] * alphaScale;
                 Marshal.Copy(OutputColor, 0, target + offset, 4);
             }
+        }
+
+        private static float Luminance(float[] color)
+        {
+            return 0.2126f * color[0] +
+                   0.7152f * color[1] +
+                   0.0722f * color[2];
         }
     }
 }

@@ -246,6 +246,8 @@ namespace InFalsusChartExt
         private static readonly List<VisualNoteDescriptor> RuntimeNotes =
             new List<VisualNoteDescriptor>();
         private static int _generation = -1;
+        private static readonly Dictionary<int, double>
+            VisualNowCache = new Dictionary<int, double>(8);
         private static IntPtr _track;
         private static int _errors;
 
@@ -278,7 +280,10 @@ namespace InFalsusChartExt
                             context.VisualChart.Notes[i];
                         if (descriptor != null &&
                             descriptor.Kind != VisualNoteKind.SkyArea)
+                        {
+                            CacheVisualTimes(descriptor);
                             RuntimeNotes.Add(descriptor);
+                        }
                     }
                 }
 
@@ -286,14 +291,17 @@ namespace InFalsusChartExt
                     !frame.IsValid)
                     return;
 
+                VisualNowCache.Clear();
                 for (int i = 0; i < RuntimeNotes.Count; i++)
                 {
                     VisualNoteDescriptor descriptor = RuntimeNotes[i];
 
-                    double startLead = frame.Lead(
-                        descriptor.TimingGroup, descriptor.StartMs);
-                    double endLead = frame.Lead(
-                        descriptor.TimingGroup, descriptor.EndMs);
+                    double visualNow = VisualNow(
+                        descriptor.TimingGroup, frame.NowMs);
+                    double startLead =
+                        descriptor.VisualStartMs - visualNow;
+                    double endLead =
+                        descriptor.VisualEndMs - visualNow;
                     bool active = startLead <= frame.MaxLeadMs &&
                         (descriptor.Lifetime == VisualNoteLifetime.NoClip
                             ? endLead >= -frame.NoClipTailMs
@@ -358,8 +366,32 @@ namespace InFalsusChartExt
             }
             Instances.Clear();
             RuntimeNotes.Clear();
+            VisualNowCache.Clear();
             _generation = -1;
             _track = IntPtr.Zero;
+        }
+
+        private static void CacheVisualTimes(
+            VisualNoteDescriptor descriptor)
+        {
+            descriptor.VisualStartMs =
+                TimingGroupRuntime.VisualTimeMs(
+                    descriptor.TimingGroup, descriptor.StartMs);
+            descriptor.VisualEndMs =
+                TimingGroupRuntime.VisualTimeMs(
+                    descriptor.TimingGroup, descriptor.EndMs);
+            descriptor.VisualTimingGeneration =
+                ChartExtState.CompileGeneration;
+        }
+
+        private static double VisualNow(
+            int group, double nowMs)
+        {
+            if (VisualNowCache.TryGetValue(group, out double value))
+                return value;
+            value = TimingGroupRuntime.VisualTimeMs(group, nowMs);
+            VisualNowCache[group] = value;
+            return value;
         }
 
         private static VisualNoteInstance Create(

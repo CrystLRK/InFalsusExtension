@@ -57,24 +57,28 @@ namespace InFalsusChartExt.CustomSong.Audio
             IntPtr channel,
             out int paused);
 
-#if IFCE_DIAGNOSTICS
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        internal delegate int ChannelGetPosition(
+            IntPtr channel,
+            out uint position,
+            uint positionType);
+
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         internal delegate int ChannelIsPlaying(
             IntPtr channel,
             out int playing);
 
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-        internal delegate int ChannelGetPosition(
-            IntPtr channel,
-            out uint position,
-            uint positionType);
-#endif
-
-        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         internal delegate int ChannelStop(IntPtr channel);
 
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         internal delegate int SoundRelease(IntPtr sound);
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        internal delegate int SoundGetLength(
+            IntPtr sound,
+            out uint length,
+            uint type);
 
         private static IntPtr _module;
         private static SoundGetSystem _getSystem;
@@ -86,12 +90,11 @@ namespace InFalsusChartExt.CustomSong.Audio
         private static ChannelSetPosition _setPosition;
         private static ChannelSetPaused _setPaused;
         private static ChannelGetPaused _getPaused;
-#if IFCE_DIAGNOSTICS
-        private static ChannelIsPlaying _isPlaying;
         private static ChannelGetPosition _getPosition;
-#endif
+        private static ChannelIsPlaying _isPlaying;
         private static ChannelStop _stop;
         private static SoundRelease _release;
+        private static SoundGetLength _soundGetLength;
 
         /// <summary>
         /// Resolves every export used after a replacement Sound is created.
@@ -127,6 +130,9 @@ namespace InFalsusChartExt.CustomSong.Audio
             _getPaused ??= Resolve<ChannelGetPaused>(
                 "FMOD5_Channel_GetPaused",
                 "FMOD_Channel_GetPaused");
+            _getPosition ??= Resolve<ChannelGetPosition>(
+                "FMOD5_Channel_GetPosition",
+                "FMOD_Channel_GetPosition");
             _stop ??= Resolve<ChannelStop>(
                 "FMOD5_Channel_Stop",
                 "FMOD_Channel_Stop");
@@ -208,15 +214,6 @@ namespace InFalsusChartExt.CustomSong.Audio
                 "FMOD_Channel_GetPaused"))(
                     channel, out paused);
 
-#if IFCE_DIAGNOSTICS
-        internal static int IsPlaying(
-            IntPtr channel,
-            out int playing) =>
-            (_isPlaying ??= Resolve<ChannelIsPlaying>(
-                "FMOD5_Channel_IsPlaying",
-                "FMOD_Channel_IsPlaying"))(
-                    channel, out playing);
-
         internal static int GetPosition(
             IntPtr channel,
             out uint position,
@@ -225,7 +222,14 @@ namespace InFalsusChartExt.CustomSong.Audio
                 "FMOD5_Channel_GetPosition",
                 "FMOD_Channel_GetPosition"))(
                     channel, out position, type);
-#endif
+
+        internal static int IsPlaying(
+            IntPtr channel,
+            out int playing) =>
+            (_isPlaying ??= Resolve<ChannelIsPlaying>(
+                "FMOD5_Channel_IsPlaying",
+                "FMOD_Channel_IsPlaying"))(
+                    channel, out playing);
 
         internal static int Stop(IntPtr channel) =>
             (_stop ??= Resolve<ChannelStop>(
@@ -236,6 +240,15 @@ namespace InFalsusChartExt.CustomSong.Audio
             (_release ??= Resolve<SoundRelease>(
                 "FMOD5_Sound_Release",
                 "FMOD_Sound_Release"))(sound);
+
+        internal static int GetLength(
+            IntPtr sound,
+            out uint length,
+            uint type) =>
+            (_soundGetLength ??= Resolve<SoundGetLength>(
+                "FMOD5_Sound_GetLength",
+                "FMOD_Sound_GetLength"))(
+                    sound, out length, type);
 
         private static T Resolve<T>(params string[] names)
             where T : Delegate

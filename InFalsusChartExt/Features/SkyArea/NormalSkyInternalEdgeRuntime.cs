@@ -417,10 +417,19 @@ namespace InFalsusChartExt
                         area.Pointer +
                         NativeLayoutCatalog.SkySafeArea.NativeNoteId) != id)
                     return;
-                MeshRenderer renderer = area.meshRenderer;
-                if (renderer == null ||
-                    renderer.Pointer == IntPtr.Zero)
+                IntPtr rendererPtr = Marshal.ReadIntPtr(
+                    area.Pointer +
+                    NativeLayoutCatalog.SkySafeArea.MeshRenderer);
+                if (rendererPtr == IntPtr.Zero)
                     return;
+                if (!RendererViewCache.TryGetValue(
+                        rendererPtr, out MeshRenderer renderer) ||
+                    renderer == null ||
+                    renderer.Pointer == IntPtr.Zero)
+                {
+                    renderer = new MeshRenderer(rendererPtr);
+                    RendererViewCache[rendererPtr] = renderer;
+                }
                 Block.Clear();
                 Block.SetVector(MissingRangeId, ranges);
                 renderer.SetPropertyBlock(Block);

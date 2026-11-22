@@ -71,17 +71,26 @@ namespace InFalsusChartExt
         internal bool WasJudged;
         internal bool JudgementSettled;
         internal byte LastJudgement;
+        internal double PastEndSinceMs = double.NaN;
         internal long GlowSerial;
 
         internal SkyBandRange RangeAt(double timeMs)
         {
             if (EndMs <= StartMs)
-                return new SkyBandRange(
-                    (float)(EndCenter - EndWidth * 0.5),
-                    (float)(EndCenter + EndWidth * 0.5));
+                return RangeAtProgress(1.0);
 
             double u = (timeMs - StartMs) /
                        (double)(EndMs - StartMs);
+            return RangeAtProgress(u);
+        }
+
+        /// <summary>
+        /// Horizontal range at a normalized shape progress. The managed
+        /// renderer and the line glow both pass the scroll-time progress so
+        /// the band's shape and its line effect stay on the same clock.
+        /// </summary>
+        internal SkyBandRange RangeAtProgress(double u)
+        {
             if (u <= 0.0) u = 0.0;
             else if (u >= 1.0) u = 1.0;
 
@@ -197,6 +206,7 @@ namespace InFalsusChartExt
         internal readonly List<SkyJudgmentLayer> JudgeLayers =
             new List<SkyJudgmentLayer>();
         internal int Generation;
+        private uint _chartLastEnd;
 
         internal bool IsVisualMember(long id)
             => VisualMemberIds.Contains(id);
@@ -315,6 +325,14 @@ namespace InFalsusChartExt
 
         private void Build(IReadOnlyList<Icp1Codec.Note> notes)
         {
+            _chartLastEnd = 0;
+            for (int i = 0; i < notes.Count; i++)
+            {
+                Icp1Codec.Note note = notes[i];
+                if (note != null && note.EndMs > _chartLastEnd)
+                    _chartLastEnd = note.EndMs;
+            }
+
             for (int i = 0; i < notes.Count; i++)
             {
                 Icp1Codec.Note note = notes[i];
@@ -681,6 +699,12 @@ namespace InFalsusChartExt
 
         private void BuildVisualAndJudgeLists()
         {
+            // The native judge ends the chart after its last judge-list note.
+            // If the final normal block is moved to the independent judge,
+            // its trailing part is filtered out of the native list and the
+            // game can end before that block finishes. Leave the whole tail
+            // block native: the spawn list feeds the judge list, so keeping
+            // a managed visual would still remove it from the native judge.
             for (int bi = 0; bi < Blocks.Count; bi++)
             {
                 SkyBlock block = Blocks[bi];
@@ -698,8 +722,27 @@ namespace InFalsusChartExt
                         member.AdjacentSameAuthoredPrevious.Block !=
                         block)
                         visual = true;
+                    if (!visual &&
+                        TimingGroupRuntime.HasSpeedChange(
+                            member.TimingGroup,
+                            member.StartMs,
+                            member.EndMs))
+                        visual = true;
                 }
                 if (!visual) continue;
+
+                if (_chartLastEnd > 0 &&
+                    block.EndMs >= _chartLastEnd)
+                {
+                    // Fully native tail: native visual + native judgement,
+                    // so the chart end waits for the final skyarea.
+                    ChartExtMod.Log.Msg(
+                        "[ChartExt] sky block tail kept native: " +
+                        $"first={block.Members[0].Id} " +
+                        $"end={block.EndMs}ms");
+                    continue;
+                }
+
                 block.RequiresIndependentJudge = true;
 
                 for (int mi = 0; mi < block.Members.Count; mi++)

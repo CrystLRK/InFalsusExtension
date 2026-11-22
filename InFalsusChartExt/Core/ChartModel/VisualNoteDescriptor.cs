@@ -40,6 +40,9 @@ namespace InFalsusChartExt
         internal double StartWidth;
         internal double EndCenter;
         internal double EndWidth;
+        internal double VisualStartMs;
+        internal double VisualEndMs;
+        internal int VisualTimingGeneration = -1;
 
         internal static VisualNoteDescriptor FromNative(
             Icp1Codec.Note note,

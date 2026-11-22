@@ -2,13 +2,13 @@
 
 ------
 
-**当前 main 分支版本：0.2.0-patch1**
+**当前 main 分支版本：0.3.0**
 
-**当前 dev 分支版本：0.2.0-patch1**
+**当前 dev 分支版本：0.3.0**
 
-**[SPCConverter](https://github.com/CrystLRK/SPCConverter) 当前 main 分支版本：1.2.4-patch1，最低支持版本：0.2.0**
+**[SPCConverter](https://github.com/CrystLRK/SPCConverter) 当前 main 分支版本：1.2.4-patch2，最低支持版本：0.2.0**
 
-**[SPCConverter](https://github.com/CrystLRK/SPCConverter) 当前 dev 分支版本：1.2.4-patch1，最低支持版本：0.2.0**
+**[SPCConverter](https://github.com/CrystLRK/SPCConverter) 当前 dev 分支版本：1.2.4-patch2，最低支持版本：0.2.0**
 
 ------
 
@@ -65,9 +65,17 @@ InFalsusExtension 是 In Falsus 的一个模组，包含了包括但不限于加
 
 - 在显示设置中新增了独占全屏模式选项。
 
+## 配置项
+
+配置文件位于对应加载器的配置目录中：
+
+- `EnableNegativeSpeedModify`：是否启用负流速 SkyArea / Hold 的视觉修正，默认 `true`；
+- `HideNoInputBrackets`：是否隐藏 NoInput / NoClip SkyArea 的方括号，默认 `true`；
+- `AutoplaySaveScores`：自动游玩时是否保存成绩，默认 `false`。
+
 ## 使用要求
 
-- 截至当前最新版 **0.2.0-patch1**，模组支持 Steam 最新版 **1.0.7b**。
+- 截至当前最新版 **0.3.0**，模组支持 Steam 最新版 **1.0.7b**。
 - 游戏本体需要已安装 MelonLoader 0.7.x **或** BepInEx 6 IL2CPP 模组加载器。
 - 需在 Release 内获取**符合当前加载器**的模组文件。
 
@@ -115,6 +123,7 @@ In Falsus/
 4. 启动游戏。
 
 如无特殊说明，两种版本的模组更新方法均为直接覆盖旧模组文件。
+更新前请完全退出游戏，并保留 `profiles/`、配置文件和成绩文件。
 
 
 ## 导入自制谱

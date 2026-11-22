@@ -16,6 +16,8 @@ namespace InFalsusChartExt
         private const int TapHoldMs = 50;
         private const int HoldSlackMs = 40;
         private const double CursorSpeed = 3.0;
+        private const double CursorCenter = 0.5;
+        private const double CursorRecenterDelayMs = 200.0;
         private const double FlickStepCap = 0.02;
         private const double FlickApproachMs = 600.0;
         private const double FlickGroupWindowMs = 16.0;
@@ -47,19 +49,18 @@ namespace InFalsusChartExt
         private static int _flickGestureCount;
         private static int _flickGestureIndex;
         private static int _flickGestureHold;
+        private static int _flickGestureFrames;
         private static double _flickGestureStepCap =
             FlickGestureStepCap;
         private static bool _flickGestureActive;
         private static int _lastGroundLane = -1;
         private static readonly List<long> Scratch =
             new List<long>();
-        private static readonly HashSet<long> TimingLogged =
-            new HashSet<long>();
         private static int _driveCursor;
         private static bool _failed;
-        private static int _flickLogs;
         private static bool _cursorMotionLogged;
         private static double _lastCursorMoveTime = -1.0;
+        private static double _cursorIdleMs;
         private static int _cursorInjectedFrame = -1;
         private const int MaxActiveSkies = 16;
         private static readonly double[] ActiveSkyCenters =
@@ -97,13 +98,12 @@ namespace InFalsusChartExt
         {
             ReleaseAll();
             SwipedFlicks.Clear();
-            TimingLogged.Clear();
             _failed = false;
-            _flickLogs = 0;
             _cursorMotionLogged = false;
             HasActed = false;
             _driveCursor = 0;
             _lastCursorMoveTime = -1.0;
+            _cursorIdleMs = 0.0;
             _cursorInjectedFrame = -1;
             _visualTrack = null;
             _visualSyncDisabled = false;
@@ -112,6 +112,7 @@ namespace InFalsusChartExt
             _flickGestureCount = 0;
             _flickGestureIndex = 0;
             _flickGestureHold = 0;
+            _flickGestureFrames = 0;
             _flickGestureStepCap = FlickGestureStepCap;
             _flickGestureActive = false;
             _lastGroundLane = -1;
@@ -175,11 +176,45 @@ namespace InFalsusChartExt
                         continue;
                     Drive(judge, input.Due, nowMs);
                 }
+                ClampCursorState(judge);
             }
             catch (Exception exception)
             {
                 Fail("input tick", exception);
             }
+        }
+
+        /// <summary>
+        /// Track._BBA (0x180672FC0) feeds its argument straight into
+        /// (x - 0.5) * trackWidth without clamping. Autoplay can push the raw
+        /// cursor outside [0,1] while chasing an out-of-bounds note; keep both
+        /// logical cursor fields inside the track and resync the visual ghost
+        /// cursor so manual input can recover.
+        /// </summary>
+        private static void ClampCursorState(IntPtr judge)
+        {
+            if (judge == IntPtr.Zero) return;
+            try
+            {
+                float x = ReadFloat(
+                    judge, NativeLayoutCatalog.SkyJudge.CursorX);
+                float raw = ReadFloat(
+                    judge, NativeLayoutCatalog.SkyJudge.CursorRaw);
+                if (!float.IsFinite(x) || !float.IsFinite(raw))
+                    return;
+                float clampedX = Math.Max(0f, Math.Min(1f, x));
+                float clampedRaw = Math.Max(0f, Math.Min(1f, raw));
+                if (clampedX == x && clampedRaw == raw)
+                    return;
+                Marshal.WriteInt32(
+                    judge + NativeLayoutCatalog.SkyJudge.CursorX,
+                    BitConverter.SingleToInt32Bits(clampedX));
+                Marshal.WriteInt32(
+                    judge + NativeLayoutCatalog.SkyJudge.CursorRaw,
+                    BitConverter.SingleToInt32Bits(clampedRaw));
+                SyncVisualCursor(judge);
+            }
+            catch { }
         }
 
         internal static void TickCursorOnly(double nowMs)
@@ -451,6 +486,7 @@ namespace InFalsusChartExt
 
             if (_flickGroupCount > 0)
             {
+                _cursorIdleMs = 0.0;
                 StartFlickGesture(
                     current,
                     hasSky,
@@ -462,11 +498,13 @@ namespace InFalsusChartExt
             double target = current;
             if (hasSky)
             {
+                _cursorIdleMs = 0.0;
                 TeleportCursor(judge, skyCenter);
                 return;
             }
             else if (hasNearSky)
             {
+                _cursorIdleMs = 0.0;
                 double lead = Math.Min(
                     SkyLockMaxLeadMs,
                     Math.Max(
@@ -477,6 +515,25 @@ namespace InFalsusChartExt
                 {
                     TeleportCursor(judge, nearSkyCenter);
                     return;
+                }
+            }
+            else
+            {
+                _cursorIdleMs += dt * 1000.0;
+                if (_cursorIdleMs >= CursorRecenterDelayMs)
+                {
+                    double clamped = Math.Max(
+                        0.0, Math.Min(1.0, current));
+                    if (Math.Abs(clamped - CursorCenter) > 0.001)
+                    {
+                        MoveCursor(
+                            judge,
+                            clamped,
+                            CursorCenter,
+                            false,
+                            dt);
+                        return;
+                    }
                 }
             }
             MoveCursor(judge, current, target, false, dt);
@@ -547,10 +604,21 @@ namespace InFalsusChartExt
                 TryGetActiveSkyBounds(
                     out skyLeft,
                     out skyRight);
+            if (hasSkyBounds)
+            {
+                skyLeft = Math.Max(0.0, Math.Min(1.0, skyLeft));
+                skyRight = Math.Max(0.0, Math.Min(1.0, skyRight));
+                if (skyRight < skyLeft)
+                {
+                    skyLeft = 0.0;
+                    skyRight = 1.0;
+                }
+            }
             void AddWaypoint(double value)
             {
                 if (_flickGestureCount >= FlickGestureTargets)
                     return;
+                value = Math.Max(0.0, Math.Min(1.0, value));
                 value = hasSkyBounds
                     ? Math.Max(
                         skyLeft,
@@ -610,19 +678,10 @@ namespace InFalsusChartExt
 
             _flickGestureIndex = 0;
             _flickGestureHold = 0;
+            _flickGestureFrames = 0;
             _flickGestureActive = true;
             for (int i = 0; i < _flickGroupCount; i++)
                 SwipedFlicks.Add(FlickGroupIds[i]);
-            if (_flickLogs++ < 20)
-            {
-                ChartExtMod.Log.Msg(
-                    "[AutoplayInput] flick group " +
-                    $"n={_flickGroupCount} " +
-                    $"targets={_flickGestureCount} " +
-                    $"L={(hasLeft ? 1 : 0)} " +
-                    $"R={(hasRight ? 1 : 0)} " +
-                    $"reset={(needReset ? 1 : 0)}");
-            }
         }
 
         private static void UpdateFlickGesture(
@@ -630,6 +689,15 @@ namespace InFalsusChartExt
             double current,
             double dt)
         {
+            if (_flickGestureActive)
+            {
+                _flickGestureFrames++;
+                if (_flickGestureFrames > 180)
+                {
+                    _flickGestureActive = false;
+                    return;
+                }
+            }
             for (int guard = 0; guard < 4; guard++)
             {
                 if (!_flickGestureActive)
@@ -641,6 +709,7 @@ namespace InFalsusChartExt
                 }
                 double target =
                     FlickGestureWaypoints[_flickGestureIndex];
+                target = Math.Max(0.0, Math.Min(1.0, target));
                 if (Math.Abs(target - current) > 0.0015)
                 {
                     MoveCursor(
@@ -939,6 +1008,15 @@ namespace InFalsusChartExt
                     note + NativeLayoutCatalog.Note.RuntimeLead));
             if (!double.IsFinite(delta))
                 return false;
+            if (due.Type == 2)
+            {
+                // The native hold head is judged by the press edge at the
+                // authored start. Do not wait for the first interval record
+                // (which can be 100ms+ after the head on grouped holds).
+                if (delta > GroundEarlyWindowMs)
+                    return false;
+                return true;
+            }
             unsafe
             {
                 for (int r = 0; r < count; r++)
@@ -960,15 +1038,6 @@ namespace InFalsusChartExt
                         note + NativeLayoutCatalog.Note.RuntimeLead,
                         BitConverter.DoubleToInt64Bits(
                             corrected));
-                    if (TimingLogged.Count < 20 &&
-                        TimingLogged.Add(due.Id))
-                    {
-                        ChartExtMod.Log.Msg(
-                            "[AutoplayInput] exact " +
-                            $"id={due.Id} type={due.Type} " +
-                            $"rel={offset:F1} delta={delta:F1} " +
-                            $"corrected={corrected:F1}");
-                    }
                     return true;
                 }
             }

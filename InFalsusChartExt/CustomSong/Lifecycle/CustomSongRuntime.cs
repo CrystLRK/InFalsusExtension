@@ -28,6 +28,7 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
         internal CustomLibraryPlan Plan { get; }
         internal CustomSongPlan ActiveSong { get; private set; }
         internal CustomChartPlan ActiveChart { get; private set; }
+        internal bool SelectionCurrent { get; private set; }
 
         internal InstalledCustomLibrary(CustomLibraryPlan plan)
         {
@@ -71,19 +72,16 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
                 audioName);
             if (_byBaseName.TryGetValue(stem, out song))
                 return true;
+            // Audio names are the installed song BaseName (with any
+            // extension stripped). Do not fall back to substring matching:
+            // an official preview such as "a la mode" must never resolve to
+            // an unrelated custom song whose name happens to contain it.
             foreach (CustomSongPlan candidate in _byBaseName.Values)
             {
                 if (string.Equals(
                         stem,
                         candidate.Config.Id,
                         StringComparison.OrdinalIgnoreCase))
-                {
-                    song = candidate;
-                    return true;
-                }
-                if (stem.IndexOf(
-                        candidate.BaseName,
-                        StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     song = candidate;
                     return true;
@@ -115,7 +113,13 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
         {
             ActiveChart = chart;
             ActiveSong = chart?.Song;
+            SelectionCurrent = chart is not null;
             SongLibraryInstaller.UpdatePreviewForChart(chart);
+        }
+
+        internal void ClearSelection()
+        {
+            SelectionCurrent = false;
         }
     }
 
@@ -139,6 +143,12 @@ namespace InFalsusChartExt.CustomSong.Lifecycle
 
         internal static CustomChartPlan ActiveChart =>
             _installed?.ActiveChart;
+
+        internal static bool SelectionCurrent =>
+            _installed?.SelectionCurrent == true;
+
+        internal static void ClearSelection()
+            => _installed?.ClearSelection();
 
         internal static CustomLibraryPlan ScanIfNeeded()
         {

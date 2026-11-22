@@ -326,18 +326,59 @@ namespace InFalsusChartExt
                 "trackUpdate");
         }
 
+        [HarmonyPrefix]
+        private static void Prefix(
+            Il2Cppifapp.Game.Scenes.Game.Track __instance)
+        {
+            FrameProfiler.TrackBegin();
+            // Track.Update renders the native notes. Hide grouped taps for
+            // this render pass; the judge list prefix restores type 1 before
+            // judgement. Leaving the restore at the end of the frame made the
+            // native body visible again on the next frame.
+            if (TimingGroupRuntime.Active)
+            {
+                TimingGroupVisualRuntime.ApplyFlip(
+                    true,
+                    __instance != null
+                        ? __instance.Pointer
+                        : IntPtr.Zero);
+            }
+        }
+
         [HarmonyPostfix]
         private static void Postfix(Il2Cppifapp.Game.Scenes.Game.Track __instance)
         {
+            long postStart = FrameProfiler.Begin(out long postAlloc);
+            long sectionStart = FrameProfiler.Begin(out long sectionAlloc);
             RegressionDiagnostics.TrackTick(__instance);
             TrackMoveRuntime.Tick(__instance);
             SceneControlRuntime.Tick(__instance);
             SkyColorRuntime.Tick(__instance);
+            FrameProfiler.End(
+                FrameProfiler.PostA1, sectionStart, sectionAlloc);
+            sectionStart = FrameProfiler.Begin(out sectionAlloc);
             BackgroundSkin.Tick();
+            FrameProfiler.End(
+                FrameProfiler.PostA2, sectionStart, sectionAlloc);
+            sectionStart = FrameProfiler.Begin(out sectionAlloc);
             TimingNoInputSkyVisualRuntime.Tick(__instance);
+            FrameProfiler.End(
+                FrameProfiler.PostA3, sectionStart, sectionAlloc);
+            sectionStart = FrameProfiler.Begin(out sectionAlloc);
             VisualNoteRuntime.Tick(__instance);
+            FrameProfiler.End(
+                FrameProfiler.PostA, sectionStart, sectionAlloc);
+            sectionStart = FrameProfiler.Begin(out sectionAlloc);
+            // 负速长条窗口叠在 timinggroup 的 _IA 事务之上：必须先还原
+            // 我们保存的“已 warp 值”，再让 TimingGroupRuntime 还原真值。
+            NegativeSpeedVisualRuntime.RestoreSkyWarp();
             TimingGroupRuntime.Restore();
             TimingGroupVisualRuntime.Tick(__instance);
+            NegativeSpeedVisualRuntime.Tick(__instance);
+            NegativeFlickVisualRuntime.Tick(__instance);
+            FrameProfiler.End(
+                FrameProfiler.PostB, sectionStart, sectionAlloc);
+            sectionStart = FrameProfiler.Begin(out sectionAlloc);
             ShowTextRuntime.EnsureLoaded();
             // JudgeListFilter disabled for now: the game rebuilds the judge list every
             // frame after this postfix, so the strip does not reliably precede the
@@ -346,8 +387,16 @@ namespace InFalsusChartExt
             AudioOffsetRuntime.Tick();
             HideGroupSkyColorRuntime.Tick(__instance);
             NormalSkyInternalEdgeRuntime.Tick(__instance);
+            FrameProfiler.End(
+                FrameProfiler.PostC, sectionStart, sectionAlloc);
+            sectionStart = FrameProfiler.Begin(out sectionAlloc);
             SkyBlockVisualRuntime.Tick(__instance);
             SkyBlockLineGlowRuntime.Tick(__instance);
+            FrameProfiler.End(
+                FrameProfiler.PostD, sectionStart, sectionAlloc);
+            FrameProfiler.End(
+                FrameProfiler.Post, postStart, postAlloc);
+            FrameProfiler.TrackEnd();
         }
     }
 
@@ -420,7 +469,8 @@ namespace InFalsusChartExt
                         long id = Marshal.ReadInt64(
                             note + NativeLayoutCatalog.Note.Id);
                         if ((blockPlan != null &&
-                             blockPlan.IsJudgeMember(id)) ||
+                             blockPlan.IsJudgeMember(id) &&
+                             SkyBlockRuntimeSlots.IsBound(id)) ||
                             (bombPlan != null &&
                              bombPlan.IsBomb(id)))
                             continue;
@@ -475,20 +525,32 @@ namespace InFalsusChartExt
             {
                 SceneControlRuntime.PrepareForFrame(
                     TimingGroupRuntime.CurrentMs());
-                if (!TimingGroupRuntime.Active) return;
                 if (__3 == null || __3.Pointer == IntPtr.Zero) return;
                 Il2Cppifapp.Game.Scenes.Game.Track track = Il2Cppifapp.Game.Scenes.Game.Track._a;
                 if (track == null || track.Pointer == IntPtr.Zero) return;
                 var spawn = track._QnA;
+                bool timingActive = TimingGroupRuntime.Active;
                 if (spawn != null && spawn.Pointer == __3.Pointer)
                 {
-                    TimingGroupRuntime.ApplyWarp();
-                    TimingGroupVisualRuntime.ApplyFlip(true);
+                    if (timingActive)
+                    {
+                        TimingGroupRuntime.ApplyWarp();
+                        TimingGroupVisualRuntime.ApplyFlip(
+                            true, track.Pointer);
+                    }
+                    // 负速 SkyArea 只依赖全局 W(t)，不要求谱面存在
+                    // timinggroup；这里独立于 timingActive 执行。
+                    NegativeSpeedVisualRuntime.ApplySkyWarp();
                 }
                 else
                 {
-                    TimingGroupRuntime.Restore();
-                    TimingGroupVisualRuntime.ApplyFlip(false);
+                    NegativeSpeedVisualRuntime.RestoreSkyWarp();
+                    if (timingActive)
+                    {
+                        TimingGroupRuntime.Restore();
+                        TimingGroupVisualRuntime.ApplyFlip(
+                            false, track.Pointer);
+                    }
                 }
             }
             catch
@@ -531,9 +593,12 @@ namespace InFalsusChartExt
                     BuildProfile.Supports(NativeCapability.SkyBlock) &&
                     blockPlan != null &&
                     blockPlan.JudgeMembers.Count > 0;
+                bool wantNegative =
+                    NegativeSpeedVisualRuntime.Enabled &&
+                    ChartExtState.NegativeSpeedSlots.Count > 0;
                 if (!wantBomb && !wantTiming &&
                     !wantSceneControl && !wantSkyBlockVisual &&
-                    !wantSkyBlockJudge) return;
+                    !wantSkyBlockJudge && !wantNegative) return;
                 Il2Cppifapp.Game.Scenes.Game.Track track = Il2Cppifapp.Game.Scenes.Game.Track._a;
                 if (track == null || track.Pointer == IntPtr.Zero) return;
                 var spawn = track._QnA;
@@ -548,7 +613,20 @@ namespace InFalsusChartExt
                 }
                 if (spawnPhase)
                 {
+                    // 原生 SkyArea 网格的 Z 跨度取自 note start/end；
+                    // 必须在 timinggroup 的字段改写之后覆盖为长条窗口。
+                    NegativeSpeedVisualRuntime.ApplyVisualFields();
+                }
+                if (spawnPhase)
+                {
                     SceneControlRuntime.FilterSpawnList(__3);
+                    if (wantTiming)
+                    {
+                        NegativeFlickVisualRuntime.EnsureChart(track);
+                        NegativeFlickVisualRuntime.StripSpawnList(__3);
+                    }
+                    if (wantNegative)
+                        NegativeSpeedVisualRuntime.StripSpawnList(__3);
                 }
                 if (wantBomb && spawnPhase)
                 {
@@ -755,7 +833,9 @@ namespace InFalsusChartExt
                         position * NativeLayoutCatalog.NoteStride;
                     long id = Marshal.ReadInt64(
                         note + NativeLayoutCatalog.Note.Id);
-                    if (blockPlan.IsVisualMember(id))
+                    if (blockPlan.IsVisualMember(id) &&
+                        SkyBlockRuntimeSlots.IsBound(id) &&
+                        !SkyBlockVisualRuntime.IsVisualAbandoned(id))
                     {
                         HideNativeTarget(id);
                         continue;

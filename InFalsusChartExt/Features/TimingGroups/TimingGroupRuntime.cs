@@ -32,6 +32,13 @@ namespace InFalsusChartExt
         private static SpeedCurve _globalCurve;
         private static readonly Dictionary<int, SpeedCurve> GroupCurves =
             new Dictionary<int, SpeedCurve>();
+        /// <summary>
+        /// 组 BPM 阶梯时间线（type5 高 32 位）。只用于长音符 record 密度，
+        /// 不参与视觉/判定。0 表示未携带，回落到 chart 基础 BPM。
+        /// </summary>
+        private static readonly Dictionary<int, List<(double Time, double Bpm)>>
+            GroupBpmSteps =
+                new Dictionary<int, List<(double Time, double Bpm)>>();
         private static int _curveGeneration = -1;
         private static int _curveGlobalEvents = -1;
         private static int _curveGroupEvents = -1;
@@ -80,15 +87,21 @@ namespace InFalsusChartExt
             private readonly List<double> _times = new List<double>();
             private readonly List<double> _windAt = new List<double>();
             private readonly List<double> _multAfter = new List<double>();
+            private readonly List<double> _runningMax = new List<double>();
+            private bool _extendFirst;
 
             internal bool AllPositive { get; private set; } = true;
 
             internal void Build(
-                List<(double Time, double Mult, int Order)> events)
+                List<(double Time, double Mult, int Order)> events,
+                bool extendFirst = false)
             {
                 _times.Clear();
                 _windAt.Clear();
                 _multAfter.Clear();
+                _runningMax.Clear();
+                _extendFirst = extendFirst;
+                AllPositive = true;
                 events.Sort((a, b) =>
                 {
                     int time = a.Time.CompareTo(b.Time);
@@ -98,7 +111,12 @@ namespace InFalsusChartExt
                 });
                 double previous = 0.0;
                 double wind = 0.0;
-                double multiplier = 1.0;
+                // 组的时间线从第一条 track 开始：该时刻之前没有合法音符，
+                // 但 note 的接近段仍需按“组起点流速”渲染，否则会从
+                // 判定线前方出现。统一用第一条 track 的值向前延伸。
+                double multiplier =
+                    extendFirst && events.Count > 0 ? events[0].Mult : 1.0;
+                double running = double.NegativeInfinity;
                 for (int i = 0; i < events.Count; i++)
                 {
                     double eventTime = events[i].Time;
@@ -111,16 +129,105 @@ namespace InFalsusChartExt
                     _times.Add(eventTime);
                     _windAt.Add(wind);
                     _multAfter.Add(eventMult);
+                    running = Math.Max(running, wind);
+                    _runningMax.Add(running);
                 }
             }
 
             internal double Evaluate(double t)
             {
+                if (_times.Count == 0) return t;
                 int eventIndex = FirstEventAtOrAfter(t);
-                if (eventIndex == 0) return t;
+                if (eventIndex == 0)
+                    return _extendFirst
+                        ? _windAt[0] + _multAfter[0] * (t - _times[0])
+                        : t;
                 int previous = eventIndex - 1;
                 return _windAt[previous] +
                        _multAfter[previous] * (t - _times[previous]);
+            }
+
+            internal double MultiplierAt(double t)
+            {
+                int index = LastEventAtOrBefore(t);
+                if (index >= 0) return _multAfter[index];
+                return _extendFirst && _times.Count > 0
+                    ? _multAfter[0]
+                    : 1.0;
+            }
+
+            /// <summary>
+            /// 该时间线在 now 之后、音符到达 be 之前，是否会先升到 W(be) 之上
+            /// 再落回。成立时该音符会提前过线并折返，视觉上只能从近侧出现。
+            /// </summary>
+            internal bool CrossesBackAfter(double now, double be)
+            {
+                double target = Evaluate(be);
+                int idx = LastEventAtOrBefore(be);
+                double peak = idx >= 0
+                    ? Math.Max(target, _runningMax[idx])
+                    : target;
+                if (peak <= target + 1e-6)
+                    return false;
+                int lo = 0;
+                int hi = _runningMax.Count;
+                while (lo < hi)
+                {
+                    int mid = lo + ((hi - lo) >> 1);
+                    if (_runningMax[mid] <= target + 1e-6) lo = mid + 1;
+                    else hi = mid;
+                }
+                return lo < _times.Count && _times[lo] > now;
+            }
+
+            /// <summary>
+            /// 该时间线在 [start, end) 内是否存在非正流速（进入区间时已生效的
+            /// 事件也算）。用于编译期筛选需要接管视觉的长条。
+            /// </summary>
+            internal bool HasNegativeInRange(double start, double end)
+            {
+                if (AllPositive) return false;
+                double atStart = MultiplierAt(start);
+                // 0 速也需要走 W 运行时：原生位置按“当前 DepthFactor”
+                // 直接缩放，0 速会把所有音符压到判定线；W 运行时能让
+                // 它们停在冻结前的位置。是否镜像仍由 W(end)<anchor
+                // 单独决定（0 速不会触发镜像）。
+                if (!(atStart > 0.0)) return true;
+                int cursor = FirstEventAtOrAfter(start);
+                for (; cursor < _times.Count && _times[cursor] < end;
+                     cursor++)
+                {
+                    if (!(_multAfter[cursor] > 0.0)) return true;
+                }
+                return false;
+            }
+
+            internal bool HasSpeedChangeInRange(double start, double end)
+            {
+                double atStart = MultiplierAt(start);
+                int cursor = FirstEventAtOrAfter(start);
+                for (; cursor < _times.Count && _times[cursor] < end;
+                     cursor++)
+                {
+                    if (_multAfter[cursor] != atStart)
+                        return true;
+                }
+                return false;
+            }
+
+            /// <summary>
+            /// 区间内是否存在非 1.0 的流速（含进入区间时已生效的流速）。
+            private int LastEventAtOrBefore(double t)
+            {
+                int lo = 0;
+                int hi = _times.Count;
+                while (lo < hi)
+                {
+                    int mid = lo + ((hi - lo) >> 1);
+                    if (_times[mid] <= t) lo = mid + 1;
+                    else hi = mid;
+                }
+                return lo - 1;
             }
 
             internal double Inverse(double target)
@@ -148,6 +255,130 @@ namespace InFalsusChartExt
                     return _times[previous];
                 return _times[previous] +
                        (target - _windAt[previous]) / segmentMult;
+            }
+
+            /// <summary>
+            /// Inverse on a non-monotonic curve. Several source times can map
+            /// to the same visual time; pick the root closest to the authored
+            /// time, then closest to now. No fixed +/-60s clamp is used.
+            /// </summary>
+            internal bool TryInverseNear(
+                double target,
+                double expected,
+                double now,
+                out double result)
+            {
+                result = double.NaN;
+                if (_times.Count == 0)
+                {
+                    result = target;
+                    return true;
+                }
+                if (double.IsNaN(expected) ||
+                    double.IsInfinity(expected))
+                    expected = now;
+                if (AllPositive)
+                {
+                    result = Inverse(target);
+                    return !double.IsNaN(result) &&
+                           !double.IsInfinity(result);
+                }
+
+                double span = Math.Abs(expected - now);
+                double margin = Math.Max(
+                    5000.0, span * 0.5 + 2000.0);
+                double lo = Math.Min(expected, now) - margin;
+                double hi = Math.Max(expected, now) + margin;
+                double best = double.NaN;
+                double bestExpected = double.MaxValue;
+                double bestNow = double.MaxValue;
+
+                void Consider(double t)
+                {
+                    if (double.IsNaN(t) ||
+                        double.IsInfinity(t))
+                        return;
+                    if (t < lo - 1e-6 || t > hi + 1e-6)
+                        return;
+                    double toExpected = Math.Abs(t - expected);
+                    double toNow = Math.Abs(t - now);
+                    if (toExpected < bestExpected - 1e-6 ||
+                        (Math.Abs(toExpected - bestExpected) <= 1e-6 &&
+                         toNow < bestNow))
+                    {
+                        best = t;
+                        bestExpected = toExpected;
+                        bestNow = toNow;
+                    }
+                }
+
+                void ConsiderSegment(
+                    double segStart,
+                    double segEnd,
+                    double windStart,
+                    double slope)
+                {
+                    if (!(segEnd >= segStart)) return;
+                    if (!(Math.Abs(slope) > 1e-12))
+                    {
+                        if (Math.Abs(windStart - target) <= 1e-6)
+                            Consider(Math.Max(
+                                segStart,
+                                Math.Min(expected, segEnd)));
+                        return;
+                    }
+                    double t = segStart +
+                               (target - windStart) / slope;
+                    if (t >= segStart - 1e-6 &&
+                        t <= segEnd + 1e-6)
+                        Consider(Math.Max(
+                            segStart, Math.Min(t, segEnd)));
+                }
+
+                double firstTime = _times[0];
+                if (lo < firstTime)
+                {
+                    double segStart = lo;
+                    double segEnd = Math.Min(hi, firstTime);
+                    if (segEnd > segStart)
+                    {
+                        double slope = _extendFirst
+                            ? _multAfter[0]
+                            : 1.0;
+                        double windStart = _extendFirst
+                            ? _windAt[0] +
+                              _multAfter[0] *
+                              (segStart - firstTime)
+                            : segStart;
+                        ConsiderSegment(
+                            segStart, segEnd,
+                            windStart, slope);
+                    }
+                }
+
+                int firstIndex = LastEventAtOrBefore(lo);
+                if (firstIndex < 0) firstIndex = 0;
+                for (int i = firstIndex;
+                     i < _times.Count; i++)
+                {
+                    if (_times[i] > hi) break;
+                    double segStart = Math.Max(lo, _times[i]);
+                    double segEnd = i + 1 < _times.Count
+                        ? Math.Min(hi, _times[i + 1])
+                        : hi;
+                    if (segEnd < segStart) continue;
+                    double slope = _multAfter[i];
+                    double windStart =
+                        _windAt[i] +
+                        slope * (segStart - _times[i]);
+                    ConsiderSegment(
+                        segStart, segEnd,
+                        windStart, slope);
+                }
+                if (double.IsNaN(best))
+                    return false;
+                result = best;
+                return true;
             }
 
             private int FirstEventAtOrAfter(double t)
@@ -198,7 +429,19 @@ namespace InFalsusChartExt
                 if (double.IsNaN(nowMs)) return;
 
                 double wNowGlobal = WGlobal(nowMs);
-
+                double spawnLeadMs =
+                    VisualSpawnTiming.NativeQuickLeadMs;
+                try
+                {
+                    Il2Cppifapp.Game.Scenes.Game.Track track =
+                        Il2Cppifapp.Game.Scenes.Game.Track._a;
+                    if (track != null &&
+                        track.Pointer != IntPtr.Zero)
+                        spawnLeadMs =
+                            VisualSpawnTiming.MaxLeadMs(
+                                track.Pointer);
+                }
+                catch { }
                 Il2Cppifapp.Game.LogicalNotePlayer player =
                     Il2Cppifapp.Game.LogicalNotePlayer._Qe;
                 if (player == null || player.Pointer == IntPtr.Zero)
@@ -206,6 +449,7 @@ namespace InFalsusChartExt
                 Il2Cpp_b._T compiled = player._ve;
                 if (compiled == null || compiled.Pointer == IntPtr.Zero)
                     return;
+                GroupRecordDensityRuntime.Apply(compiled);
                 IntPtr compiledOwner = compiled.Pointer;
                 int compileGeneration = ChartExtState.CompileGeneration;
                 if (!TryResolveWarpTable(
@@ -225,8 +469,12 @@ namespace InFalsusChartExt
                     double wgNow = WGroup(slot.Group, nowMs);
                     double wgBe = WGroup(slot.Group, be);
                     double visualRel = wgBe - wgNow;
+                    // 用原版 authored 生成窗口，而不是固定 3000ms：
+                    // 组2/3/7 这类非 complex SkyArea 在 3000ms 窗口外
+                    // 仍会被原版生成，先按 authored 长度画一帧，进入
+                    // 窗口后才切换，表现为长度跳变。
                     bool inVisualWindow =
-                        visualRel <= 3000.0 && visualRel >= -3000.0;
+                        Math.Abs(rel) <= spawnLeadMs + 2000.0;
 #if IFCE_DIAGNOSTICS
                     long diagnosticKey =
                         ((long)(uint)slot.Side << 32) |
@@ -257,14 +505,32 @@ namespace InFalsusChartExt
                     double groupEndLead = WGroup(slot.Group, end) - wgNow;
                     double targetBe = wNowGlobal + groupLead;
                     double targetEnd = wNowGlobal + groupEndLead;
-                    int beW = (int)Math.Round(
-                        InvGlobal(targetBe, nowMs));
-                    int endW = (int)Math.Round(
-                        InvGlobal(targetEnd, nowMs));
-                    if (double.IsNaN(targetBe) || double.IsInfinity(targetBe) ||
-                        double.IsNaN(targetEnd) || double.IsInfinity(targetEnd))
+                    if (!IsFinite(targetBe) ||
+                        !IsFinite(targetEnd))
                         continue;
-
+                    double invBe = InvGlobal(
+                        targetBe, nowMs, be);
+                    double invEnd = InvGlobal(
+                        targetEnd, nowMs, end);
+                    if (!IsFinite(invBe) ||
+                        !IsFinite(invEnd))
+                        continue;
+                    int beW = (int)Math.Round(invBe);
+                    int endW = (int)Math.Round(invEnd);
+                    // 非单调曲线上 InvGlobal 可能落到兜底分支（now±60000）。
+                    // 反解结果必须真的产生目标距离，否则本帧保留 authored 时间。
+                    double verifyStart = WGlobal(beW) - wNowGlobal;
+                    double verifyEnd = WGlobal(endW) - wNowGlobal;
+                    double verifyTolerance = Math.Max(
+                        500.0,
+                        Math.Max(
+                            Math.Abs(groupLead),
+                            Math.Abs(groupEndLead)) * 0.25);
+                    if (Math.Abs(verifyStart - groupLead) >
+                            verifyTolerance ||
+                        Math.Abs(verifyEnd - groupEndLead) >
+                            verifyTolerance)
+                        continue;
                     // 注意：这里先不写 note+0x18/0x1C。
                     // `_hb` 用 note start 判断“距离不足 1000ms 立即生成”，
                     // 若在 `_hb` 前缀就写 warp 后的短时间，低流速音符会被
@@ -588,20 +854,13 @@ namespace InFalsusChartExt
             ChartExtState.GroupSlot slot, out IntPtr note)
         {
             note = IntPtr.Zero;
-            if (!HasCurrentCompiledIdentity(
-                    slot.CompiledOwner,
-                    slot.CompileGeneration))
+            if (slot == null)
                 return false;
             IntPtr basePtr = NativeNoteSlotTable.SlotBase(slot.Side);
             if (basePtr == IntPtr.Zero)
                 return false;
-            IntPtr candidate = basePtr +
+            note = basePtr +
                 slot.Position * NativeLayoutCatalog.NoteStride;
-            long currentId = Marshal.ReadInt64(
-                candidate + NativeLayoutCatalog.Note.Id);
-            if (!IsSameSlotIdentity(slot.Id, currentId))
-                return false;
-            note = candidate;
             return true;
         }
 
@@ -619,20 +878,13 @@ namespace InFalsusChartExt
         {
             note = IntPtr.Zero;
             currentType = 0;
-            if (slot == null ||
-                !HasCurrentCompiledIdentity(
-                    slot.CompiledOwner,
-                    slot.CompileGeneration))
+            if (slot == null)
                 return false;
             IntPtr basePtr = NativeNoteSlotTable.SlotBase(slot.Side);
             if (basePtr == IntPtr.Zero)
                 return false;
             IntPtr candidate = basePtr +
                 slot.Position * NativeLayoutCatalog.NoteStride;
-            long currentId = Marshal.ReadInt64(
-                candidate + NativeLayoutCatalog.Note.Id);
-            if (!IsSameSlotIdentity(slot.Id, currentId))
-                return false;
             currentType = Marshal.ReadInt32(
                 candidate + NativeLayoutCatalog.Note.Type);
             if (currentType != slot.Type &&
@@ -692,7 +944,7 @@ namespace InFalsusChartExt
             }
         }
 
-        private static bool TryResolveWarpTable(
+        internal static bool TryResolveWarpTable(
             Il2Cpp_b._T compiled,
             out IntPtr iaBase,
             out int iaLength)
@@ -903,11 +1155,123 @@ namespace InFalsusChartExt
 
         internal static double DebugWGroup(int group, double t) => WGroup(group, t);
 
+        /// <summary>
+        /// 长条区间内是否存在负流速段（含进入区间时已生效的负流速）。
+        /// </summary>
+        internal static bool HasNegativeSegment(
+            int group, double startMs, double endMs)
+        {
+            EnsureCurves();
+            SpeedCurve curve;
+            if (group > 0)
+            {
+                if (!GroupCurves.TryGetValue(group, out curve))
+                    return false;
+            }
+            else
+            {
+                curve = _globalCurve;
+            }
+            return curve != null &&
+                   curve.HasNegativeInRange(startMs, endMs);
+        }
+
+        internal static bool HasSpeedChange(
+            int group, double startMs, double endMs)
+        {
+            EnsureCurves();
+            SpeedCurve curve;
+            if (group > 0)
+            {
+                if (!GroupCurves.TryGetValue(group, out curve))
+                    return false;
+            }
+            else
+            {
+                curve = _globalCurve;
+            }
+            return curve != null &&
+                   curve.HasSpeedChangeInRange(startMs, endMs);
+        }
+
+        /// <summary>
+        /// L2：一个组的独立时间线快照（组号 / 起点 / 当前速度 / 当前 BPM）。
+        /// 组时间线只在 [Origin, ∞) 有定义；不持有全局时间线引用。
+        /// </summary>
+        internal readonly struct GroupTimeline
+        {
+            internal readonly int Group;
+            internal readonly double OriginMs;
+            internal readonly double Speed;
+            internal readonly double Bpm;
+
+            internal GroupTimeline(
+                int group, double originMs, double speed, double bpm)
+            {
+                Group = group;
+                OriginMs = originMs;
+                Speed = speed;
+                Bpm = bpm;
+            }
+        }
+
+        internal static double GroupOrigin(int group)
+        {
+            return ChartExtState.GroupOrigins.TryGetValue(
+                group, out double origin)
+                ? origin
+                : 0.0;
+        }
+
+        internal static GroupTimeline QueryGroup(int group, double t)
+        {
+            return new GroupTimeline(
+                group,
+                GroupOrigin(group),
+                SpeedAt(group, t),
+                GroupBpmAt(group, t));
+        }
+
+        /// <summary>
+        /// 指定时间点的流速倍率（用于“note 自身速度”语义）。
+        /// </summary>
+        internal static double SpeedAt(int group, double t)
+        {
+            if (t < 0.0) t = 0.0;
+            EnsureCurves();
+            SpeedCurve curve;
+            if (group > 0)
+            {
+                if (!GroupCurves.TryGetValue(group, out curve))
+                    return 1.0;
+            }
+            else
+            {
+                curve = _globalCurve;
+            }
+            return curve != null ? curve.MultiplierAt(t) : 1.0;
+        }
+
         /// <summary>该计时组在原始谱面时间 t 的视觉时间 W_g(t)。
         /// group=0 表示全局时间线。</summary>
         internal static double VisualTimeMs(int group, double t)
         {
             return group > 0 ? WGroup(group, t) : WGlobal(t);
+        }
+
+        /// <summary>
+        /// 该组时间线在 now 之后、音符 be 之前是否先越过 W(be) 再折返。
+        /// 成立时音符会提前过线，独立视觉应只在“速度为负且位于近侧”时显示。
+        /// </summary>
+        internal static bool CrossesBackAfter(
+            int group, double now, double be)
+        {
+            EnsureCurves();
+            if (group > 0 &&
+                GroupCurves.TryGetValue(group, out SpeedCurve curve))
+                return curve.CrossesBackAfter(now, be);
+            return _globalCurve != null &&
+                   _globalCurve.CrossesBackAfter(now, be);
         }
 
         /// <summary>
@@ -940,10 +1304,19 @@ namespace InFalsusChartExt
                 double startLead = WGroup(group, startMs) - groupNow;
                 double endLead = WGroup(group, endMs) - groupNow;
                 visualNow = nowMs;
-                visualStart = InvGlobal(
-                    globalNow + startLead, nowMs);
-                visualEnd = InvGlobal(
-                    globalNow + endLead, nowMs);
+                double invStart = InvGlobal(
+                    globalNow + startLead, nowMs, startMs);
+                double invEnd = InvGlobal(
+                    globalNow + endLead, nowMs, endMs);
+                if (!IsFinite(invStart) ||
+                    !IsFinite(invEnd))
+                {
+                    visualStart = 0.0;
+                    visualEnd = 0.0;
+                    return false;
+                }
+                visualStart = invStart;
+                visualEnd = invEnd;
                 if (endMs > startMs &&
                     visualEnd <= visualStart)
                     visualEnd = visualStart + 1.0;
@@ -1093,31 +1466,72 @@ namespace InFalsusChartExt
             _globalCurve.Build(global);
 
             GroupCurves.Clear();
+            GroupBpmSteps.Clear();
+            var speedBuckets =
+                new Dictionary<int, List<(double Time, double Mult, int Order)>>();
+            var bpmBuckets =
+                new Dictionary<int, List<(double Time, double Bpm)>>();
             for (int i = 0; i < groupEvents; i++)
             {
                 ChartExtState.GroupSpeed item = ChartExtState.GroupSpeeds[i];
-                if (!GroupCurves.TryGetValue(item.Group, out SpeedCurve curve))
+                if (!speedBuckets.TryGetValue(
+                        item.Group,
+                        out List<(double Time, double Mult, int Order)> events))
                 {
-                    curve = new SpeedCurve();
-                    var events =
-                        new List<(double Time, double Mult, int Order)>();
-                    for (int j = i; j < groupEvents; j++)
+                    events = new List<(double Time, double Mult, int Order)>();
+                    speedBuckets[item.Group] = events;
+                }
+                events.Add((
+                    item.TimeMs, item.Mult, item.SourceOrder));
+                if (item.Bpm > 0.0 &&
+                    !double.IsNaN(item.Bpm) &&
+                    !double.IsInfinity(item.Bpm))
+                {
+                    if (!bpmBuckets.TryGetValue(
+                            item.Group,
+                            out List<(double Time, double Bpm)> bpmSteps))
                     {
-                        ChartExtState.GroupSpeed candidate =
-                            ChartExtState.GroupSpeeds[j];
-                        if (candidate.Group != item.Group) continue;
-                        events.Add((
-                            candidate.TimeMs,
-                            candidate.Mult,
-                            candidate.SourceOrder));
+                        bpmSteps = new List<(double Time, double Bpm)>();
+                        bpmBuckets[item.Group] = bpmSteps;
                     }
-                    curve.Build(events);
-                    GroupCurves[item.Group] = curve;
+                    bpmSteps.Add((item.TimeMs, item.Bpm));
                 }
             }
+            foreach (var pair in speedBuckets)
+            {
+                var curve = new SpeedCurve();
+                curve.Build(pair.Value, true);
+                GroupCurves[pair.Key] = curve;
+            }
+            foreach (var pair in bpmBuckets)
+                GroupBpmSteps[pair.Key] = pair.Value;
             _curveGeneration = generation;
             _curveGlobalEvents = globalEvents;
             _curveGroupEvents = groupEvents;
+        }
+
+        /// <summary>
+        /// 该计时组在原始谱面时间 t 的组 BPM（阶梯，取最后一条不晚于 t 的
+        /// 组 BPM 事件）。返回 0 表示谱面未指定，调用方应回落到 chart 基础 BPM。
+        /// 仅供长音符 record 密度使用；不改变判定与视觉。
+        /// </summary>
+        internal static double GroupBpmAt(int group, double t)
+        {
+            if (group <= 0)
+                return 0.0;
+            EnsureCurves();
+            if (!GroupBpmSteps.TryGetValue(
+                    group, out List<(double Time, double Bpm)> steps) ||
+                steps == null || steps.Count == 0)
+                return 0.0;
+            double result = 0.0;
+            for (int i = 0; i < steps.Count; i++)
+            {
+                if (steps[i].Time > t)
+                    break;
+                result = steps[i].Bpm;
+            }
+            return result;
         }
 
         private static double WGlobal(double t)
@@ -1148,18 +1562,33 @@ namespace InFalsusChartExt
         /// to tens of milliseconds of visual error and left SkyArea tails after
         /// their native lifetime.
         /// </summary>
-        private static double InvGlobal(double target, double nowMs)
+        private static double InvGlobal(
+            double target, double nowMs) =>
+            InvGlobal(target, nowMs, nowMs);
+
+        private static double InvGlobal(
+            double target, double nowMs, double expectedMs)
         {
             EnsureCurves();
             if (_globalCurve.AllPositive)
             {
                 double candidate = _globalCurve.Inverse(target);
-                const double half = 60000.0;
-                return Math.Max(nowMs - half,
-                    Math.Min(candidate, nowMs + half));
+                return IsFinite(candidate)
+                    ? candidate
+                    : double.NaN;
             }
-            return InvGlobalSlow(target, nowMs);
+            return _globalCurve.TryInverseNear(
+                target, expectedMs, nowMs, out double result)
+                ? result
+                : double.NaN;
         }
+
+        /// <summary>
+        /// 把全局视觉时间换算回原生 note 字段使用的原始时间。
+        /// </summary>
+        internal static double GlobalTimeFor(
+            double target, double nowMs) =>
+            InvGlobal(target, nowMs);
 
         private static double InvGlobalSlow(double target, double nowMs)
         {
@@ -1181,6 +1610,8 @@ namespace InFalsusChartExt
 
             double segmentStart = begin;
             double wStart = WGlobal(begin);
+            double wNow = WGlobal(nowMs);
+            bool forward = target > wNow;
             double best = double.NaN;
             double bestDistance = double.PositiveInfinity;
 
@@ -1198,7 +1629,7 @@ namespace InFalsusChartExt
                               multiplier * (segmentEnd - segmentStart);
                 ConsiderInverseSegment(
                     segmentStart, segmentEnd, wStart, wEnd,
-                    target, nowMs, tolerance,
+                    target, nowMs, tolerance, forward,
                     ref best, ref bestDistance);
 
                 segmentStart = segmentEnd;
@@ -1212,7 +1643,7 @@ namespace InFalsusChartExt
                               multiplier * (end - segmentStart);
                 ConsiderInverseSegment(
                     segmentStart, end, wStart, wEnd,
-                    target, nowMs, tolerance,
+                    target, nowMs, tolerance, forward,
                     ref best, ref bestDistance);
             }
 
@@ -1228,7 +1659,7 @@ namespace InFalsusChartExt
 
         private static void ConsiderInverseSegment(
             double start, double end, double wStart, double wEnd,
-            double target, double nowMs, double tolerance,
+            double target, double nowMs, double tolerance, bool forward,
             ref double best, ref double bestDistance)
         {
             double lo = Math.Min(wStart, wEnd) - tolerance;
@@ -1247,6 +1678,11 @@ namespace InFalsusChartExt
                             (target - wStart) * (end - start) / span;
                 candidate = Math.Max(start, Math.Min(candidate, end));
             }
+
+            // 非单调曲线上同一个视觉时间可能有多个解；只接受与目标方向
+            // 一致的那一支，避免把未来的音符反解到 now 之前（视觉提前）。
+            if (forward && candidate < nowMs) return;
+            if (!forward && candidate > nowMs) return;
 
             double distance = Math.Abs(candidate - nowMs);
             if (distance >= bestDistance) return;
